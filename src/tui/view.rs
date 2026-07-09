@@ -187,16 +187,21 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
     let mut rows: Vec<Line> = Vec::new();
     match app.tab {
         Tab::Todos => {
-            if app.todos.is_empty() {
-                rows.push(Line::from("  No todos yet."));
+            let vis = app.visible_todos();
+            if vis.is_empty() {
+                if app.filter.is_empty() {
+                    rows.push(Line::from("  No todos yet."));
+                } else {
+                    rows.push(Line::from(format!("  No todos match /{}", app.filter)));
+                }
             }
-            for (i, t) in app.todos.iter().enumerate() {
+            for (i, t) in vis.iter().enumerate() {
                 let glyph = if t.status == "completed" {
                     "☑"
                 } else {
                     "☐"
                 };
-                let blocked = if app.blocked.get(i).copied().unwrap_or(false) {
+                let blocked = if app.blocked.contains(&t.id) {
                     " ⛔"
                 } else {
                     ""
@@ -206,10 +211,18 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
             }
         }
         Tab::Scratchpads => {
-            if app.pads.is_empty() {
-                rows.push(Line::from("  No scratchpads yet."));
+            let vis = app.visible_pads();
+            if vis.is_empty() {
+                if app.filter.is_empty() {
+                    rows.push(Line::from("  No scratchpads yet."));
+                } else {
+                    rows.push(Line::from(format!(
+                        "  No scratchpads match /{}",
+                        app.filter
+                    )));
+                }
             }
-            for (i, s) in app.pads.iter().enumerate() {
+            for (i, s) in vis.iter().enumerate() {
                 rows.push(styled_row(
                     format!("• {}", s.title),
                     i == cursor,
@@ -272,8 +285,8 @@ fn styled_row(row: String, selected: bool, cursor_style: Style) -> Line<'static>
 fn read_title(app: &App) -> Option<String> {
     let i = app.cursor[app.tab.idx()];
     match app.tab {
-        Tab::Todos => app.todos.get(i).map(|t| t.title.clone()),
-        Tab::Scratchpads => app.pads.get(i).map(|s| s.title.clone()),
+        Tab::Todos => app.visible_todos().get(i).map(|t| t.title.clone()),
+        Tab::Scratchpads => app.visible_pads().get(i).map(|s| s.title.clone()),
         Tab::Plans => app.visible_plans().get(i).map(|d| d.rel_path.clone()),
     }
 }

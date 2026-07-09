@@ -3,6 +3,7 @@
 //! methods driven by the crossterm event loop in mod.rs, and mouse hit-testing
 //! reads the regions the last draw recorded in `Hits` (view.rs) instead of
 //! hardcoded column math.
+use std::collections::HashSet;
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -57,8 +58,9 @@ pub struct App {
     pub quit: bool,
 
     pub todos: Vec<Todo>,
-    /// Parallel to `todos`: is_blocked computed once per reload, not per frame.
-    pub blocked: Vec<bool>,
+    /// Ids of blocked todos, computed once per reload, not per frame. Id-keyed
+    /// (not positional) so it survives the `/` filter narrowing `todos`' indices.
+    pub blocked: HashSet<String>,
     pub pads: Vec<Scratchpad>,
     pub plans: Vec<Plan>,
     pub cursor: [usize; 3],
@@ -147,7 +149,7 @@ impl App {
             status: String::new(),
             quit: false,
             todos: Vec::new(),
-            blocked: Vec::new(),
+            blocked: HashSet::new(),
             pads: Vec::new(),
             plans: Vec::new(),
             cursor: [0; 3],
@@ -195,7 +197,11 @@ impl App {
                 } else {
                     t
                 };
-                self.blocked = t.iter().map(|x| self.p.is_blocked(x)).collect();
+                self.blocked = t
+                    .iter()
+                    .filter(|x| self.p.is_blocked(x))
+                    .map(|x| x.id.clone())
+                    .collect();
                 self.todos = t;
             }
             Err(e) => self.status = format!("load failed: {e}"),
@@ -232,10 +238,43 @@ impl App {
             .collect()
     }
 
+    /// Todos after the active filter: case-insensitive substring over
+    /// title + tags + status + priority. Empty filter -> all.
+    pub fn visible_todos(&self) -> Vec<&Todo> {
+        if self.filter.is_empty() {
+            return self.todos.iter().collect();
+        }
+        let q = self.filter.to_lowercase();
+        self.todos
+            .iter()
+            .filter(|t| {
+                t.title.to_lowercase().contains(&q)
+                    || t.status.to_lowercase().contains(&q)
+                    || t.priority.to_lowercase().contains(&q)
+                    || t.tags.iter().any(|g| g.to_lowercase().contains(&q))
+            })
+            .collect()
+    }
+
+    /// Scratchpads after the active filter: title + tags. Empty filter -> all.
+    pub fn visible_pads(&self) -> Vec<&Scratchpad> {
+        if self.filter.is_empty() {
+            return self.pads.iter().collect();
+        }
+        let q = self.filter.to_lowercase();
+        self.pads
+            .iter()
+            .filter(|s| {
+                s.title.to_lowercase().contains(&q)
+                    || s.tags.iter().any(|g| g.to_lowercase().contains(&q))
+            })
+            .collect()
+    }
+
     pub fn count(&self) -> usize {
         match self.tab {
-            Tab::Todos => self.todos.len(),
-            Tab::Scratchpads => self.pads.len(),
+            Tab::Todos => self.visible_todos().len(),
+            Tab::Scratchpads => self.visible_pads().len(),
             Tab::Plans => self.visible_plans().len(),
         }
     }
@@ -258,8 +297,8 @@ impl App {
     /// detail view stays on the same item when a reload re-sorts the list.
     pub fn pin_cursor_to(&mut self, id: &str) {
         let pos = match self.tab {
-            Tab::Todos => self.todos.iter().position(|t| t.id == id),
-            Tab::Scratchpads => self.pads.iter().position(|s| s.id == id),
+            Tab::Todos => self.visible_todos().iter().position(|t| t.id == id),
+            Tab::Scratchpads => self.visible_pads().iter().position(|s| s.id == id),
             Tab::Plans => self
                 .visible_plans()
                 .iter()
@@ -273,8 +312,8 @@ impl App {
     pub fn selected_id(&self) -> Option<String> {
         let i = self.cursor[self.tab.idx()];
         match self.tab {
-            Tab::Todos => self.todos.get(i).map(|t| t.id.clone()),
-            Tab::Scratchpads => self.pads.get(i).map(|s| s.id.clone()),
+            Tab::Todos => self.visible_todos().get(i).map(|t| t.id.clone()),
+            Tab::Scratchpads => self.visible_pads().get(i).map(|s| s.id.clone()),
             Tab::Plans => self
                 .visible_plans()
                 .get(i)
@@ -309,7 +348,7 @@ impl App {
             KeyCode::Char('3') => self.switch_tab(Tab::Plans),
             KeyCode::Char('j') | KeyCode::Down => self.move_cursor(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_cursor(-1),
-            KeyCode::Char('/') if self.tab == Tab::Plans => self.mode = Mode::Filter,
+            KeyCode::Char('/') => self.mode = Mode::Filter,
             KeyCode::Char('r') => self.reload(),
             KeyCode::Char(' ') if self.tab == Tab::Todos => {
                 self.toggle_status();
@@ -466,7 +505,7 @@ impl App {
             }
             KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.filter.push(c);
-                self.cursor[Tab::Plans.idx()] = 0; // reset selection into the narrowed list
+                self.cursor[self.tab.idx()] = 0; // reset selection into the narrowed list
             }
             _ => {}
         }
@@ -612,10 +651,13 @@ impl App {
     }
 
     fn toggle_status(&mut self) {
-        let Some(t) = self.todos.get(self.cursor[Tab::Todos.idx()]) else {
-            return;
+        let (id, done) = {
+            let v = self.visible_todos();
+            let Some(t) = v.get(self.cursor[Tab::Todos.idx()]) else {
+                return;
+            };
+            (t.id.clone(), t.status == "completed")
         };
-        let (id, done) = (t.id.clone(), t.status == "completed");
         let r = if done {
             self.p.incomplete_todo(&id, false)
         } else {
@@ -627,10 +669,13 @@ impl App {
     }
 
     fn cycle_priority(&mut self) {
-        let Some(t) = self.todos.get(self.cursor[Tab::Todos.idx()]) else {
-            return;
+        let (id, next) = {
+            let v = self.visible_todos();
+            let Some(t) = v.get(self.cursor[Tab::Todos.idx()]) else {
+                return;
+            };
+            (t.id.clone(), next_priority(&t.priority).to_string())
         };
-        let (id, next) = (t.id.clone(), next_priority(&t.priority).to_string());
         if let Err(e) = self.p.update_todo(
             &id,
             TodoUpdate {
@@ -669,7 +714,13 @@ impl App {
             return;
         };
         let body = match self.tab {
-            Tab::Todos => Ok(self.todos[self.cursor[Tab::Todos.idx()]].body.clone()),
+            Tab::Todos => match self.visible_todos().get(self.cursor[Tab::Todos.idx()]) {
+                Some(t) => Ok(t.body.clone()),
+                None => {
+                    self.mode = Mode::List;
+                    return;
+                }
+            },
             Tab::Scratchpads => self
                 .p
                 .read_scratchpad(&id, "full", "", 0, 0)
@@ -915,6 +966,29 @@ mod tests {
         }
     }
 
+    /// Builds an App on the Todos tab, pre-loaded with (title, tag, priority)
+    /// todos. Mirrors Fixture::new but leaks the tempdirs (via mem::forget)
+    /// since the helper's return type must stay a bare App to match the
+    /// test bodies verbatim; nothing in those tests touches the store again.
+    fn test_app_with_todos(items: &[(&str, &str, &str)]) -> App {
+        let root = TempDir::new();
+        let repo = git_repo();
+        let p = resolve_project_in(root.path(), Some(&repo.path().to_string_lossy())).unwrap();
+        let mut app = App::new(p, Tab::Todos);
+        for (title, tag, prio) in items {
+            let tags = if tag.is_empty() {
+                vec![]
+            } else {
+                vec![tag.to_string()]
+            };
+            app.p.create_todo(title, "", prio, tags).unwrap();
+        }
+        app.reload();
+        std::mem::forget(root);
+        std::mem::forget(repo);
+        app
+    }
+
     #[test]
     fn priority_cycle() {
         assert_eq!(next_priority("low"), "medium");
@@ -981,6 +1055,34 @@ mod tests {
         f.app.filter = "x".to_string();
         f.app.switch_tab(Tab::Todos);
         assert_eq!(f.app.filter, "");
+    }
+
+    #[test]
+    fn filter_narrows_todos_by_metadata() {
+        let mut app = test_app_with_todos(&[
+            ("Rotate tokens", "auth", "high"),
+            ("Fix footer", "ui", "low"),
+        ]);
+        app.tab = Tab::Todos;
+        app.filter = "auth".to_string(); // matches tag on the first only
+        assert_eq!(app.count(), 1);
+        assert_eq!(app.visible_todos()[0].title, "Rotate tokens");
+        app.filter = "low".to_string(); // matches priority on the second
+        app.clamp_cursor();
+        assert_eq!(app.count(), 1);
+        assert_eq!(app.selected_id(), Some(app.visible_todos()[0].id.clone()));
+    }
+
+    #[test]
+    fn filter_clears_on_tab_switch() {
+        let mut app = test_app_with_todos(&[("A", "", "medium")]);
+        app.tab = Tab::Todos;
+        app.filter = "zzz".to_string();
+        app.switch_tab(Tab::Scratchpads);
+        assert!(
+            app.filter.is_empty(),
+            "filter must clear when leaving a tab"
+        );
     }
 
     #[test]
