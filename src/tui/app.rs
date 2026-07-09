@@ -96,6 +96,9 @@ pub struct App {
     pub edit_updated: String,
     /// Empty = the editor holds a brand-new, unsaved item.
     pub edit_id: String,
+    /// Buffer-held priority for a not-yet-saved todo (persisted cycle can't
+    /// apply to an item with no store row yet).
+    pub edit_priority: String,
     /// Scratchpad revision captured at edit-entry (todos ignore).
     pub edit_rev: i64,
     /// Mode to return to on save/cancel (List or Read).
@@ -171,6 +174,7 @@ impl App {
             edit_orig_body: String::new(),
             edit_updated: String::new(),
             edit_id: String::new(),
+            edit_priority: String::new(),
             edit_rev: 0,
             edit_return: Mode::List,
             hits: Hits::default(),
@@ -442,12 +446,15 @@ impl App {
                 return;
             }
             KeyCode::Char('p') if ctrl => {
-                // no todo to mutate yet on a new item
-                if self.tab == Tab::Todos && !self.edit_id.is_empty() {
-                    self.cycle_priority();
-                    // own write bumped Updated; don't self-conflict at save
-                    self.refresh_edit_updated();
-                    self.reload();
+                if self.tab == Tab::Todos {
+                    if self.edit_id.is_empty() {
+                        self.cycle_new_priority();
+                    } else {
+                        self.cycle_priority();
+                        // own write bumped Updated; don't self-conflict at save
+                        self.refresh_edit_updated();
+                        self.reload();
+                    }
                 }
                 return;
             }
@@ -580,11 +587,7 @@ impl App {
                 {
                     self.edit_focus = Focus::Body;
                 }
-                if self.tab == Tab::Todos
-                    && !self.edit_id.is_empty()
-                    && self.meta_click(m.column, m.row)
-                {
-                    self.refresh_edit_updated();
+                if self.tab == Tab::Todos && self.meta_click_edit(m.column, m.row) {
                     return;
                 }
                 self.forward_mouse(m); // edtui places the cursor / starts a drag
@@ -608,6 +611,26 @@ impl App {
                 true
             }
             None => false,
+        }
+    }
+
+    /// Edit-mode meta-row click: routes priority clicks on a not-yet-saved
+    /// item to the buffer-side cycle (no store write); everything else falls
+    /// through to the existing-item meta_click, guard-refreshed after.
+    fn meta_click_edit(&mut self, x: u16, y: u16) -> bool {
+        match self.hits.meta_seg_at(x, y) {
+            Some(MetaSeg::Priority) if self.edit_id.is_empty() => {
+                self.cycle_new_priority();
+                true
+            }
+            _ if !self.edit_id.is_empty() => {
+                let hit = self.meta_click(x, y);
+                if hit {
+                    self.refresh_edit_updated();
+                }
+                hit
+            }
+            _ => false,
         }
     }
 
@@ -681,6 +704,11 @@ impl App {
         ) {
             self.status = format!("priority change failed: {e}");
         }
+    }
+
+    /// Cycles the pending priority for a not-yet-saved todo (no store write).
+    pub fn cycle_new_priority(&mut self) {
+        self.edit_priority = next_priority(&self.edit_priority).to_string();
     }
 
     fn delete_pending(&mut self) {
@@ -794,6 +822,7 @@ impl App {
         self.edit_updated = String::new();
         self.edit_rev = 0;
         self.edit_id = String::new(); // signals "new" to save_edit
+        self.edit_priority = "medium".to_string();
         self.read_id = String::new();
         self.edit_return = Mode::List;
         self.status.clear();
@@ -882,7 +911,9 @@ impl App {
             return;
         }
         let r = if self.tab == Tab::Todos {
-            self.p.create_todo(title, body, "", Vec::new()).map(|_| ())
+            self.p
+                .create_todo(title, body, &self.edit_priority, Vec::new())
+                .map(|_| ())
         } else {
             self.p
                 .create_scratchpad(title, body, Vec::new())
@@ -991,6 +1022,19 @@ mod tests {
         assert_eq!(next_priority("medium"), "high");
         assert_eq!(next_priority("high"), "low");
         assert_eq!(next_priority("bogus"), "medium"); // unrecognized falls back
+    }
+
+    #[test]
+    fn new_todo_saves_chosen_priority() {
+        let mut app = test_app_with_todos(&[]);
+        app.tab = Tab::Todos;
+        app.begin_edit_new();
+        app.title_ed = super::new_editor("Ship it", true);
+        app.cycle_new_priority(); // medium -> high
+        app.save_edit();
+        let todos = app.p.list_todos(Default::default()).unwrap();
+        let t = todos.iter().find(|t| t.title == "Ship it").unwrap();
+        assert_eq!(t.priority, "high");
     }
 
     #[test]

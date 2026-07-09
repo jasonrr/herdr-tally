@@ -376,7 +376,7 @@ fn card_theme(title: &'static str, focused: bool) -> EditorTheme<'static> {
 }
 
 fn draw_edit(app: &mut App, f: &mut Frame, area: Rect) {
-    let show_meta = app.tab == Tab::Todos && !app.edit_id.is_empty();
+    let show_meta = app.tab == Tab::Todos;
     let discard = app.mode == Mode::DiscardConfirm;
     let mut constraints = vec![Constraint::Length(4)]; // title card: 2 rows + border
     if show_meta {
@@ -396,12 +396,14 @@ fn draw_edit(app: &mut App, f: &mut Frame, area: Rect) {
     f.render_widget(title_view, title_area);
 
     if show_meta {
-        let i = app.cursor[Tab::Todos.idx()];
-        let meta = {
+        let status_priority = if app.edit_id.is_empty() {
+            Some(("open".to_string(), app.edit_priority.clone()))
+        } else {
+            let i = app.cursor[Tab::Todos.idx()];
             let v = app.visible_todos();
             v.get(i).map(|t| (t.status.clone(), t.priority.clone()))
         };
-        if let Some((status, priority)) = meta {
+        if let Some((status, priority)) = status_priority {
             let meta_area = parts[1];
             f.render_widget(Line::from(meta_line(&status, &priority)).dim(), meta_area);
             app.hits.meta = Some(MetaHits::new(meta_area.x, meta_area.y, &status, &priority));
