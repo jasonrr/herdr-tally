@@ -311,18 +311,14 @@ fn draw_read(app: &mut App, f: &mut Frame, area: Rect) {
     let body_area = *parts.last().unwrap();
     if is_todo {
         let i = app.cursor[Tab::Todos.idx()];
-        if let Some(t) = app.todos.get(i) {
+        let meta = {
+            let v = app.visible_todos();
+            v.get(i).map(|t| (t.status.clone(), t.priority.clone()))
+        };
+        if let Some((status, priority)) = meta {
             let meta_area = parts[2];
-            f.render_widget(
-                Line::from(meta_line(&t.status, &t.priority)).dim(),
-                meta_area,
-            );
-            app.hits.meta = Some(MetaHits::new(
-                meta_area.x,
-                meta_area.y,
-                &t.status,
-                &t.priority,
-            ));
+            f.render_widget(Line::from(meta_line(&status, &priority)).dim(), meta_area);
+            app.hits.meta = Some(MetaHits::new(meta_area.x, meta_area.y, &status, &priority));
         }
     }
 
@@ -375,18 +371,14 @@ fn draw_edit(app: &mut App, f: &mut Frame, area: Rect) {
 
     if show_meta {
         let i = app.cursor[Tab::Todos.idx()];
-        if let Some(t) = app.todos.get(i) {
+        let meta = {
+            let v = app.visible_todos();
+            v.get(i).map(|t| (t.status.clone(), t.priority.clone()))
+        };
+        if let Some((status, priority)) = meta {
             let meta_area = parts[1];
-            f.render_widget(
-                Line::from(meta_line(&t.status, &t.priority)).dim(),
-                meta_area,
-            );
-            app.hits.meta = Some(MetaHits::new(
-                meta_area.x,
-                meta_area.y,
-                &t.status,
-                &t.priority,
-            ));
+            f.render_widget(Line::from(meta_line(&status, &priority)).dim(), meta_area);
+            app.hits.meta = Some(MetaHits::new(meta_area.x, meta_area.y, &status, &priority));
         }
     }
 
