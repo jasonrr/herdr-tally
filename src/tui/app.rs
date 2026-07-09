@@ -474,9 +474,7 @@ impl App {
                 self.tab = t;
                 self.status.clear();
                 self.mode = Mode::List;
-                if t != Tab::Plans {
-                    self.filter.clear();
-                }
+                self.filter.clear();
                 self.reload();
                 return;
             }
@@ -644,10 +642,8 @@ impl App {
         self.tab = t;
         self.mode = Mode::List;
         self.status.clear();
-        if t != Tab::Plans {
-            // a Docs filter shouldn't linger (invisibly) on other tabs or on return
-            self.filter.clear();
-        }
+        // a filter shouldn't linger (invisibly) on other tabs or on return
+        self.filter.clear();
     }
 
     fn toggle_status(&mut self) {
@@ -1083,6 +1079,15 @@ mod tests {
             app.filter.is_empty(),
             "filter must clear when leaving a tab"
         );
+    }
+
+    #[test]
+    fn filter_clears_when_switching_into_plans() {
+        let mut app = test_app_with_todos(&[("A", "", "medium")]);
+        app.tab = Tab::Todos;
+        app.filter = "zzz".to_string();
+        app.switch_tab(Tab::Plans);
+        assert!(app.filter.is_empty(), "filter must not leak into Plans");
     }
 
     #[test]
