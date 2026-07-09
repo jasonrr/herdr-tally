@@ -1,0 +1,44 @@
+id = "herdr-notes"
+name = "herdr-notes"
+version = "0.1.0"
+description = "Project-scoped todos & scratchpads for you and your agents."
+min_herdr_version = "0.7.0"
+platforms = ["macos"]
+
+[[build]]
+platforms = ["macos"]
+# `rm -f` before cp: overwriting a signed Mach-O in place leaves a stale kernel
+# signature cache that SIGKILLs the binary at exec (Killed: 9). A fresh inode avoids it.
+command = ["/bin/sh", "-c", "export PATH=\"$HOME/.cargo/bin:/opt/homebrew/bin:$PATH\"; cargo build --release && mkdir -p bin && rm -f bin/herdr-notes && cp target/release/herdr-notes bin/herdr-notes"]
+
+# NOTE: panes open with cwd = the user's project (not the plugin root), and herdr
+# only resolves a relative *program* against the plugin root — not a script passed
+# as an argument. Locate the binary via $HERDR_PLUGIN_ROOT (which herdr injects into
+# every plugin command) instead of a bare relative path.
+[[panes]]
+id = "todos"
+title = "Todos"
+placement = "split"
+command = ["bash", "-c", 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"; exec "$HERDR_PLUGIN_ROOT/bin/herdr-notes" tui todos']
+
+[[panes]]
+id = "scratchpads"
+title = "Scratchpads"
+placement = "split"
+command = ["bash", "-c", 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"; exec "$HERDR_PLUGIN_ROOT/bin/herdr-notes" tui scratchpads']
+
+[[actions]]
+id = "toggle-todos"
+title = "Todos pane"
+description = "Open, focus, or close the todos pane for this project."
+command = ["bash", "scripts/toggle-pane.sh", "todos"]
+
+[[actions]]
+id = "toggle-scratchpads"
+title = "Scratchpads pane"
+description = "Open, focus, or close the scratchpads pane for this project."
+command = ["bash", "scripts/toggle-pane.sh", "scratchpads"]
+
+[[events]]
+on = "worktree.created"
+command = ["bash", "scripts/on-worktree.sh"]
