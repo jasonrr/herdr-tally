@@ -236,7 +236,7 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
             for (i, s) in vis.iter().enumerate() {
                 let rel = crate::tui::time::humanize_since(&s.updated, now);
                 rows.push(styled_row(
-                    format!("• {}  {}", s.title, rel),
+                    format!("• {} · {}", s.title, rel),
                     i == cursor,
                     cursor_style,
                 ));
