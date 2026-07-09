@@ -12,7 +12,7 @@ use ratatui::widgets::{Block, Paragraph, Wrap};
 
 use super::app::{App, Focus, Mode, Tab};
 
-const TAB_LABELS: [&str; 3] = ["1 Todos", "2 Scratchpads", "3 Docs"];
+const TAB_LABELS: [&str; 3] = ["1 Todos", "2 Scratchpads", "3 Plans"];
 const TAB_PREFIX: &str = "  ";
 const TAB_GAP: &str = "    ";
 
@@ -98,7 +98,7 @@ impl Hits {
         }
         for (i, (s, e)) in self.tabs.iter().enumerate() {
             if x >= *s && x < *e {
-                return Some([Tab::Todos, Tab::Scratchpads, Tab::Docs][i]);
+                return Some([Tab::Todos, Tab::Scratchpads, Tab::Plans][i]);
             }
         }
         None
@@ -162,7 +162,7 @@ fn draw_tab_bar(app: &mut App, f: &mut Frame, area: Rect) {
         Span::from(TAB_GAP),
         label(1, Tab::Scratchpads),
         Span::from(TAB_GAP),
-        label(2, Tab::Docs),
+        label(2, Tab::Plans),
     ]);
     f.render_widget(line, area);
     app.hits.tab_row = area.y;
@@ -217,15 +217,15 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
                 ));
             }
         }
-        Tab::Docs => {
-            let vis = app.visible_docs();
+        Tab::Plans => {
+            let vis = app.visible_plans();
             if vis.is_empty() {
                 if app.filter.is_empty() {
                     rows.push(Line::from(
-                        "  No docs found. Configure paths in $HERDR_PLUGIN_CONFIG_DIR/doc-paths.",
+                        "  No plans found. Configure paths in $HERDR_PLUGIN_CONFIG_DIR/plan-paths.",
                     ));
                 } else {
-                    rows.push(Line::from(format!("  No docs match /{}", app.filter)));
+                    rows.push(Line::from(format!("  No plans match /{}", app.filter)));
                 }
             }
             for (i, d) in vis.iter().enumerate() {
@@ -268,13 +268,13 @@ fn styled_row(row: String, selected: bool, cursor_style: Style) -> Line<'static>
 }
 
 /// Title text for the detail view: the selected row's title (todos/pads) or
-/// rel path (docs). None when the cursor points past the list (item vanished).
+/// rel path (plans). None when the cursor points past the list (item vanished).
 fn read_title(app: &App) -> Option<String> {
     let i = app.cursor[app.tab.idx()];
     match app.tab {
         Tab::Todos => app.todos.get(i).map(|t| t.title.clone()),
         Tab::Scratchpads => app.pads.get(i).map(|s| s.title.clone()),
-        Tab::Docs => app.visible_docs().get(i).map(|d| d.rel_path.clone()),
+        Tab::Plans => app.visible_plans().get(i).map(|d| d.rel_path.clone()),
     }
 }
 
@@ -411,12 +411,12 @@ fn footer(app: &App) -> &'static str {
                 "↑↓ · enter · n new · space done · e edit · p prio · c hide done · d del · q"
             }
             Tab::Scratchpads => "↑↓ move · enter read · n new · e edit · d del · 1·2·3 · r · q",
-            Tab::Docs => "↑↓ move · enter read · / filter · 1·2·3 · r · q",
+            Tab::Plans => "↑↓ move · enter read · / filter · 1·2·3 · r · q",
         },
         Mode::Read => match app.tab {
             Tab::Todos => "space done · p prio · e edit · y yank · R raw · esc back",
             Tab::Scratchpads => "e edit · y yank · R raw · esc back",
-            Tab::Docs => "y yank · R raw · esc back",
+            Tab::Plans => "y yank · R raw · esc back",
         },
         Mode::Confirm => "y confirm · n/esc cancel",
         Mode::Edit => match app.tab {
@@ -457,7 +457,8 @@ mod tests {
             tab_row: 0,
             ..Hits::default()
         };
-        // Go's tabAtX contract: 2..=8 Todos, 13..=25 Scratchpads, 30..=35 Docs
+        // Go's tabAtX contract: 2..=8 Todos, 13..=25 Scratchpads, 30..=36 Plans
+        // ("Plans" is one char longer than "Docs", so the tab's range grows by 1.)
         assert_eq!(h.tab_at(1, 0), None);
         assert_eq!(h.tab_at(2, 0), Some(Tab::Todos));
         assert_eq!(h.tab_at(8, 0), Some(Tab::Todos));
@@ -465,9 +466,9 @@ mod tests {
         assert_eq!(h.tab_at(13, 0), Some(Tab::Scratchpads));
         assert_eq!(h.tab_at(25, 0), Some(Tab::Scratchpads));
         assert_eq!(h.tab_at(26, 0), None);
-        assert_eq!(h.tab_at(30, 0), Some(Tab::Docs));
-        assert_eq!(h.tab_at(35, 0), Some(Tab::Docs));
-        assert_eq!(h.tab_at(36, 0), None);
+        assert_eq!(h.tab_at(30, 0), Some(Tab::Plans));
+        assert_eq!(h.tab_at(36, 0), Some(Tab::Plans));
+        assert_eq!(h.tab_at(37, 0), None);
         assert_eq!(h.tab_at(2, 1), None, "wrong row");
         h.tab_row = 5;
         assert_eq!(h.tab_at(2, 5), Some(Tab::Todos), "tab row offset respected");

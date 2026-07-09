@@ -1,6 +1,6 @@
 mod cli;
-mod docs;
 mod mcp;
+mod plans;
 mod store;
 mod tui;
 

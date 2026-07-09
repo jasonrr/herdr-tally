@@ -10,7 +10,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use edtui::{EditorEventHandler, EditorMode, EditorState, Lines};
 use ratatui::text::Text;
 
-use crate::docs::{self, Doc};
+use crate::plans::{self, Plan};
 use crate::store::{Project, Scratchpad, Todo, TodoFilter, TodoUpdate};
 
 use super::markdown;
@@ -20,7 +20,7 @@ use super::view::{Hits, MetaSeg};
 pub enum Tab {
     Todos,
     Scratchpads,
-    Docs,
+    Plans,
 }
 
 impl Tab {
@@ -28,7 +28,7 @@ impl Tab {
         match self {
             Tab::Todos => 0,
             Tab::Scratchpads => 1,
-            Tab::Docs => 2,
+            Tab::Plans => 2,
         }
     }
 }
@@ -60,10 +60,10 @@ pub struct App {
     /// Parallel to `todos`: is_blocked computed once per reload, not per frame.
     pub blocked: Vec<bool>,
     pub pads: Vec<Scratchpad>,
-    pub docs: Vec<Doc>,
+    pub plans: Vec<Plan>,
     pub cursor: [usize; 3],
 
-    /// Active Docs-tab filter text (empty = no filter).
+    /// Active Plans-tab filter text (empty = no filter).
     pub filter: String,
     /// Todos tab: when set, completed todos are dropped from the list ('c').
     pub hide_completed: bool,
@@ -149,7 +149,7 @@ impl App {
             todos: Vec::new(),
             blocked: Vec::new(),
             pads: Vec::new(),
-            docs: Vec::new(),
+            plans: Vec::new(),
             cursor: [0; 3],
             filter: String::new(),
             hide_completed: false,
@@ -204,7 +204,7 @@ impl App {
             Ok(s) => self.pads = s,
             Err(e) => self.status = format!("load failed: {e}"),
         }
-        self.docs = docs::list(&self.p.path, &docs::load_doc_paths());
+        self.plans = plans::list(&self.p.path, &plans::load_plan_paths());
 
         if matches!(self.mode, Mode::Read | Mode::Edit | Mode::DiscardConfirm)
             && !self.read_id.is_empty()
@@ -217,14 +217,14 @@ impl App {
         self.clamp_cursor();
     }
 
-    /// The Docs list after the active filter (case-insensitive substring over
-    /// rel_path and heading). The Docs tab indexes this, not self.docs.
-    pub fn visible_docs(&self) -> Vec<&Doc> {
+    /// The Plans list after the active filter (case-insensitive substring over
+    /// rel_path and heading). The Plans tab indexes this, not self.plans.
+    pub fn visible_plans(&self) -> Vec<&Plan> {
         if self.filter.is_empty() {
-            return self.docs.iter().collect();
+            return self.plans.iter().collect();
         }
         let q = self.filter.to_lowercase();
-        self.docs
+        self.plans
             .iter()
             .filter(|d| {
                 d.rel_path.to_lowercase().contains(&q) || d.heading.to_lowercase().contains(&q)
@@ -236,7 +236,7 @@ impl App {
         match self.tab {
             Tab::Todos => self.todos.len(),
             Tab::Scratchpads => self.pads.len(),
-            Tab::Docs => self.visible_docs().len(),
+            Tab::Plans => self.visible_plans().len(),
         }
     }
 
@@ -260,8 +260,8 @@ impl App {
         let pos = match self.tab {
             Tab::Todos => self.todos.iter().position(|t| t.id == id),
             Tab::Scratchpads => self.pads.iter().position(|s| s.id == id),
-            Tab::Docs => self
-                .visible_docs()
+            Tab::Plans => self
+                .visible_plans()
                 .iter()
                 .position(|d| d.abs_path.to_string_lossy() == id),
         };
@@ -275,8 +275,8 @@ impl App {
         match self.tab {
             Tab::Todos => self.todos.get(i).map(|t| t.id.clone()),
             Tab::Scratchpads => self.pads.get(i).map(|s| s.id.clone()),
-            Tab::Docs => self
-                .visible_docs()
+            Tab::Plans => self
+                .visible_plans()
                 .get(i)
                 .map(|d| d.abs_path.to_string_lossy().into_owned()),
         }
@@ -306,16 +306,16 @@ impl App {
             }
             KeyCode::Char('1') => self.switch_tab(Tab::Todos),
             KeyCode::Char('2') => self.switch_tab(Tab::Scratchpads),
-            KeyCode::Char('3') => self.switch_tab(Tab::Docs),
+            KeyCode::Char('3') => self.switch_tab(Tab::Plans),
             KeyCode::Char('j') | KeyCode::Down => self.move_cursor(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_cursor(-1),
-            KeyCode::Char('/') if self.tab == Tab::Docs => self.mode = Mode::Filter,
+            KeyCode::Char('/') if self.tab == Tab::Plans => self.mode = Mode::Filter,
             KeyCode::Char('r') => self.reload(),
             KeyCode::Char(' ') if self.tab == Tab::Todos => {
                 self.toggle_status();
                 self.reload();
             }
-            KeyCode::Char('d') if self.tab != Tab::Docs => {
+            KeyCode::Char('d') if self.tab != Tab::Plans => {
                 if let Some(id) = self.selected_id() {
                     self.pending = id;
                     self.mode = Mode::Confirm;
@@ -326,8 +326,8 @@ impl App {
                     self.enter_read();
                 }
             }
-            KeyCode::Char('n') if self.tab != Tab::Docs => self.begin_edit_new(),
-            KeyCode::Char('e') if self.tab != Tab::Docs => self.begin_edit(),
+            KeyCode::Char('n') if self.tab != Tab::Plans => self.begin_edit_new(),
+            KeyCode::Char('e') if self.tab != Tab::Plans => self.begin_edit(),
             KeyCode::Char('p') if self.tab == Tab::Todos => {
                 self.cycle_priority();
                 self.reload();
@@ -355,7 +355,7 @@ impl App {
                 self.cycle_priority();
                 self.reload();
             }
-            KeyCode::Char('e') | KeyCode::Enter if self.tab != Tab::Docs => self.begin_edit(),
+            KeyCode::Char('e') | KeyCode::Enter if self.tab != Tab::Plans => self.begin_edit(),
             KeyCode::Char('y') => self.yank(),
             // body scrolling (clamped against the rendered height at draw time)
             KeyCode::Char('j') | KeyCode::Down => self.scroll_read(1),
@@ -435,7 +435,7 @@ impl App {
                 self.tab = t;
                 self.status.clear();
                 self.mode = Mode::List;
-                if t != Tab::Docs {
+                if t != Tab::Plans {
                     self.filter.clear();
                 }
                 self.reload();
@@ -466,7 +466,7 @@ impl App {
             }
             KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.filter.push(c);
-                self.cursor[Tab::Docs.idx()] = 0; // reset selection into the narrowed list
+                self.cursor[Tab::Plans.idx()] = 0; // reset selection into the narrowed list
             }
             _ => {}
         }
@@ -605,7 +605,7 @@ impl App {
         self.tab = t;
         self.mode = Mode::List;
         self.status.clear();
-        if t != Tab::Docs {
+        if t != Tab::Plans {
             // a Docs filter shouldn't linger (invisibly) on other tabs or on return
             self.filter.clear();
         }
@@ -675,7 +675,7 @@ impl App {
                 .read_scratchpad(&id, "full", "", 0, 0)
                 .map(|(s, _)| s.content)
                 .map_err(|e| e.to_string()),
-            Tab::Docs => docs::read(std::path::Path::new(&id)).map_err(|e| e.to_string()),
+            Tab::Plans => plans::read(std::path::Path::new(&id)).map_err(|e| e.to_string()),
         };
         match body {
             Ok(b) => {
@@ -906,8 +906,8 @@ mod tests {
         }
     }
 
-    fn doc(rel: &str, heading: &str) -> Doc {
-        Doc {
+    fn doc(rel: &str, heading: &str) -> Plan {
+        Plan {
             rel_path: rel.to_string(),
             abs_path: std::path::PathBuf::from(format!("/abs/{rel}")),
             heading: heading.to_string(),
@@ -925,8 +925,8 @@ mod tests {
 
     #[test]
     fn docs_filter_matches_relpath_and_heading_case_insensitive() {
-        let mut f = Fixture::new(Tab::Docs);
-        f.app.docs = vec![
+        let mut f = Fixture::new(Tab::Plans);
+        f.app.plans = vec![
             doc("docs/specs/alpha.md", "Alpha Spec"),
             doc("docs/specs/beta.md", "Beta Spec"),
             doc("docs/notes/gamma.md", "Storage Design"),
@@ -934,7 +934,7 @@ mod tests {
         f.app.filter = "ALPHA".to_string();
         let v: Vec<&str> = f
             .app
-            .visible_docs()
+            .visible_plans()
             .iter()
             .map(|d| d.rel_path.as_str())
             .collect();
@@ -943,26 +943,30 @@ mod tests {
         f.app.filter = "storage".to_string(); // matches heading only
         let v: Vec<&str> = f
             .app
-            .visible_docs()
+            .visible_plans()
             .iter()
             .map(|d| d.rel_path.as_str())
             .collect();
         assert_eq!(v, ["docs/notes/gamma.md"]);
 
         f.app.filter = String::new();
-        assert_eq!(f.app.visible_docs().len(), 3);
+        assert_eq!(f.app.visible_plans().len(), 3);
     }
 
     #[test]
     fn filter_keys_narrow_and_clear() {
-        let mut f = Fixture::new(Tab::Docs);
-        f.app.docs = vec![doc("a/alpha.md", "A"), doc("b/beta.md", "B")];
-        f.app.cursor[Tab::Docs.idx()] = 1;
+        let mut f = Fixture::new(Tab::Plans);
+        f.app.plans = vec![doc("a/alpha.md", "A"), doc("b/beta.md", "B")];
+        f.app.cursor[Tab::Plans.idx()] = 1;
         f.app.on_key(key(KeyCode::Char('/')));
         assert_eq!(f.app.mode, Mode::Filter);
         type_str(&mut f.app, "beta");
         assert_eq!(f.app.count(), 1);
-        assert_eq!(f.app.cursor[Tab::Docs.idx()], 0, "typing resets the cursor");
+        assert_eq!(
+            f.app.cursor[Tab::Plans.idx()],
+            0,
+            "typing resets the cursor"
+        );
         f.app.on_key(key(KeyCode::Enter));
         assert_eq!(f.app.mode, Mode::List);
         assert_eq!(f.app.filter, "beta", "enter keeps the filter");
@@ -973,7 +977,7 @@ mod tests {
 
     #[test]
     fn filter_cleared_on_tab_switch_away() {
-        let mut f = Fixture::new(Tab::Docs);
+        let mut f = Fixture::new(Tab::Plans);
         f.app.filter = "x".to_string();
         f.app.switch_tab(Tab::Todos);
         assert_eq!(f.app.filter, "");
@@ -1203,8 +1207,8 @@ mod tests {
         f.store().create_todo("t", "b", "", Vec::new()).unwrap();
         f.app.reload();
         f.app.on_key(key(KeyCode::Char('e')));
-        f.app.switch_tab(Tab::Docs);
-        assert_eq!(f.app.tab, Tab::Docs);
+        f.app.switch_tab(Tab::Plans);
+        assert_eq!(f.app.tab, Tab::Plans);
         assert_eq!(f.app.mode, Mode::List);
     }
 

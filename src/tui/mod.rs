@@ -1,5 +1,5 @@
 //! TUI adapter: ratatui + crossterm rewrite of the Go bubbletea panes. Entry
-//! is `tally tui <todos|scratchpads> [--project PATH]`; the Docs tab is
+//! is `tally tui <todos|scratchpads> [--project PATH]`; the Plans tab is
 //! reachable from either via key 3 or a tab click. Mouse is first-class:
 //! SGR capture is enabled and every mode handles wheel + click (the whole
 //! point of the Rust port).
