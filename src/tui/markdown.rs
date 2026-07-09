@@ -48,12 +48,50 @@ impl StyleSheet for GlamourDark {
 
 /// Renders markdown to an owned Text so the app can cache it (tui-markdown
 /// returns a Text borrowing the input string).
+///
+/// `neutralize_task_lists` runs first: tui-markdown 0.3.8 panics rendering loose
+/// GFM task lists (the shape every plan/spec doc uses), which would kill the
+/// pane — rewriting the markers to plain checkbox glyphs sidesteps the bug.
 pub fn render(body: &str) -> Text<'static> {
-    let body = reformat_tables(body);
+    let body = neutralize_task_lists(&reformat_tables(body));
     owned(tui_markdown::from_str_with_options(
         &body,
         &Options::new(GlamourDark),
     ))
+}
+
+/// Rewrites GFM task-list markers (`- [ ]` / `- [x]`) into plain list items with
+/// a checkbox glyph. tui-markdown 0.3.8 panics rendering task-list markers in
+/// loose lists (`line.spans.insert(1, ..)` into an empty span vec, lib.rs:469),
+/// and plan/spec docs are full of them. Neutralizing the marker means
+/// pulldown-cmark never emits the TaskListMarker event that trips the bug, and
+/// the item still reads as a checkbox.
+fn neutralize_task_lists(body: &str) -> String {
+    body.lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            let indent = &line[..line.len() - trimmed.len()];
+            for bullet in ['-', '*', '+'] {
+                let Some(after) = trimmed
+                    .strip_prefix(bullet)
+                    .and_then(|r| r.strip_prefix(' '))
+                else {
+                    continue;
+                };
+                if let Some(rest) = after.strip_prefix("[ ]") {
+                    return format!("{indent}- ☐ {}", rest.trim_start());
+                }
+                if let Some(rest) = after
+                    .strip_prefix("[x]")
+                    .or_else(|| after.strip_prefix("[X]"))
+                {
+                    return format!("{indent}- ☑ {}", rest.trim_start());
+                }
+            }
+            line.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn split_cells(line: &str) -> Vec<String> {
@@ -175,5 +213,32 @@ mod tests {
     fn reformat_tables_leaves_nontables_untouched() {
         let input = "# Heading\n\ntext | with a pipe but no delimiter row\n";
         assert_eq!(reformat_tables(input), input.trim_end_matches('\n'));
+    }
+
+    #[test]
+    fn neutralize_task_lists_rewrites_markers() {
+        let md = "- [ ] open\n- [x] done\n  - [X] nested done\n* [ ] star bullet\n";
+        let out = neutralize_task_lists(md);
+        assert!(out.contains("- ☐ open"));
+        assert!(out.contains("- ☑ done"));
+        assert!(
+            out.contains("  - ☑ nested done"),
+            "indent preserved: {out:?}"
+        );
+        assert!(out.contains("- ☐ star bullet"));
+        assert!(!out.contains("[ ]") && !out.contains("[x]") && !out.contains("[X]"));
+        // non-task lines untouched
+        assert_eq!(neutralize_task_lists("- plain\ntext"), "- plain\ntext");
+    }
+
+    #[test]
+    fn render_does_not_panic_on_loose_task_list() {
+        // Loose GFM task list (blank line between items) crashes tui-markdown
+        // 0.3.8 raw; render must neutralize so it never panics.
+        let md = "- [ ] a\n\n- [x] b\n";
+        let r = std::panic::catch_unwind(|| {
+            render(md);
+        });
+        assert!(r.is_ok(), "render must not panic on a loose task list");
     }
 }
