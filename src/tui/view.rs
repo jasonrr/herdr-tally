@@ -306,14 +306,27 @@ fn styled_meta(row: String, selected: bool, cursor_style: Style) -> Line<'static
     }
 }
 
-/// Title text for the detail view: the selected row's title (todos/pads) or
-/// rel path (plans). None when the cursor points past the list (item vanished).
+/// Title text for the detail view: the item pinned by `read_id` (todos/pads)
+/// or its abs_path (plans) — resolved against the full lists, not the
+/// filtered/cursor-indexed ones, so a mutation that drops the item out of the
+/// active filter doesn't blank the view out from under it.
 fn read_title(app: &App) -> Option<String> {
-    let i = app.cursor[app.tab.idx()];
     match app.tab {
-        Tab::Todos => app.visible_todos().get(i).map(|t| t.title.clone()),
-        Tab::Scratchpads => app.visible_pads().get(i).map(|s| s.title.clone()),
-        Tab::Plans => app.visible_plans().get(i).map(|d| d.rel_path.clone()),
+        Tab::Todos => app
+            .todos
+            .iter()
+            .find(|t| t.id == app.read_id)
+            .map(|t| t.title.clone()),
+        Tab::Scratchpads => app
+            .pads
+            .iter()
+            .find(|s| s.id == app.read_id)
+            .map(|s| s.title.clone()),
+        Tab::Plans => app
+            .plans
+            .iter()
+            .find(|d| d.abs_path.to_string_lossy() == app.read_id)
+            .map(|d| d.rel_path.clone()),
     }
 }
 
@@ -336,11 +349,11 @@ fn draw_read(app: &mut App, f: &mut Frame, area: Rect) {
 
     let body_area = *parts.last().unwrap();
     if is_todo {
-        let i = app.cursor[Tab::Todos.idx()];
-        let meta = {
-            let v = app.visible_todos();
-            v.get(i).map(|t| (t.status.clone(), t.priority.clone()))
-        };
+        let meta = app
+            .todos
+            .iter()
+            .find(|t| t.id == app.read_id)
+            .map(|t| (t.status.clone(), t.priority.clone()));
         if let Some((status, priority)) = meta {
             let meta_area = parts[2];
             f.render_widget(Line::from(meta_line(&status, &priority)).dim(), meta_area);
@@ -464,6 +477,53 @@ fn footer(app: &App) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::resolve_project_in;
+    use crate::store::testutil::{TempDir, git_repo};
+
+    /// Filtering to a high-priority todo, opening it in read mode, then
+    /// mutating the field the filter matched on (as `p`/`space` do) must not
+    /// blank the detail view just because the item fell out of the filtered
+    /// list — the view is pinned to `read_id`, not the filtered cursor.
+    #[test]
+    fn read_title_survives_item_leaving_filter() {
+        let root = TempDir::new();
+        let repo = git_repo();
+        let p = resolve_project_in(root.path(), Some(&repo.path().to_string_lossy())).unwrap();
+        let mut app = App::new(p, Tab::Todos);
+        app.p.create_todo("Ship it", "", "high", vec![]).unwrap();
+        app.p.create_todo("Other task", "", "low", vec![]).unwrap();
+        app.reload();
+
+        app.filter = "high".to_string();
+        let high_id = app.visible_todos()[0].id.clone();
+        assert_eq!(app.visible_todos().len(), 1, "filter should narrow to one");
+
+        app.enter_read();
+        assert_eq!(app.read_id, high_id);
+
+        // Simulate `p` (cycle_priority): the item drops out of the "high" filter.
+        app.p
+            .update_todo(
+                &high_id,
+                crate::store::TodoUpdate {
+                    priority: Some("low".to_string()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        app.reload();
+        assert_eq!(
+            app.visible_todos().len(),
+            0,
+            "item should have left the filter"
+        );
+
+        assert_eq!(
+            read_title(&app),
+            Some("Ship it".to_string()),
+            "read view must stay resolved by read_id, not the filtered cursor"
+        );
+    }
 
     /// The rendered tab bar as a plain string, built the same way
     /// draw_tab_bar assembles its spans.
