@@ -62,6 +62,8 @@ pub struct ListHits {
     /// First visible row index (cursor-follow scrolling).
     pub offset: usize,
     pub len: usize,
+    /// Terminal lines per item (2 for Todos, else 1).
+    pub row_h: u16,
 }
 
 pub struct MetaHits {
@@ -109,7 +111,8 @@ impl Hits {
         if !l.area.contains(Position::new(x, y)) {
             return None;
         }
-        let i = (y - l.area.y) as usize + l.offset;
+        let rh = l.row_h.max(1);
+        let i = ((y - l.area.y) / rh) as usize + l.offset;
         if i < l.len { Some(i) } else { None }
     }
 
@@ -184,6 +187,7 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
     } else {
         Style::new() // no highlight outside list mode (Go rowStyle)
     };
+    let now = crate::tui::time::now_unix();
     let mut rows: Vec<Line> = Vec::new();
     match app.tab {
         Tab::Todos => {
@@ -206,8 +210,15 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
                 } else {
                     ""
                 };
-                let row = format!("{glyph} [{}] {}{blocked}", t.priority, t.title);
-                rows.push(styled_row(row, i == cursor, cursor_style));
+                let line1 = format!("{glyph} [{}] {}{blocked}", t.priority, t.title);
+                let rel = crate::tui::time::humanize_since(&t.updated, now);
+                let meta = match &t.lock {
+                    Some(l) if !l.owner.is_empty() => format!("    🔒 {} · {}", l.owner, rel),
+                    _ => format!("    {}", rel),
+                };
+                let sel = i == cursor;
+                rows.push(styled_row(line1, sel, cursor_style));
+                rows.push(styled_meta(meta, sel, cursor_style));
             }
         }
         Tab::Scratchpads => {
@@ -223,8 +234,9 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
                 }
             }
             for (i, s) in vis.iter().enumerate() {
+                let rel = crate::tui::time::humanize_since(&s.updated, now);
                 rows.push(styled_row(
-                    format!("• {}", s.title),
+                    format!("• {}  {}", s.title, rel),
                     i == cursor,
                     cursor_style,
                 ));
@@ -253,9 +265,10 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
     let len = app.count();
 
     // keep the cursor row on screen (the Go pane just overflowed)
-    let h = list_area.height as usize;
-    let offset = if h > 0 && len > 0 && cursor >= h {
-        cursor - h + 1
+    let row_h: u16 = if app.tab == Tab::Todos { 2 } else { 1 };
+    let h_items = (list_area.height / row_h.max(1)) as usize;
+    let offset = if h_items > 0 && len > 0 && cursor >= h_items {
+        cursor - h_items + 1
     } else {
         0
     };
@@ -263,13 +276,17 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
         area: list_area,
         offset,
         len,
+        row_h,
     });
 
     if app.mode == Mode::Confirm {
         rows.push(Line::from(""));
         rows.push(Line::from("  Delete selected item? "));
     }
-    f.render_widget(Paragraph::new(rows).scroll((offset as u16, 0)), list_area);
+    f.render_widget(
+        Paragraph::new(rows).scroll(((offset as u16) * row_h, 0)),
+        list_area,
+    );
 }
 
 fn styled_row(row: String, selected: bool, cursor_style: Style) -> Line<'static> {
@@ -277,6 +294,15 @@ fn styled_row(row: String, selected: bool, cursor_style: Style) -> Line<'static>
         Line::from(row).style(cursor_style)
     } else {
         Line::from(row)
+    }
+}
+
+fn styled_meta(row: String, selected: bool, cursor_style: Style) -> Line<'static> {
+    let line = Line::from(row).dim();
+    if selected {
+        line.style(cursor_style)
+    } else {
+        line
     }
 }
 
@@ -516,6 +542,7 @@ mod tests {
                 area: Rect::new(0, 2, 80, 5),
                 offset: 3,
                 len: 7,
+                row_h: 1,
             }),
             ..Hits::default()
         };
@@ -524,5 +551,22 @@ mod tests {
         assert_eq!(h.list_row_at(10, 6), None); // row 7 ≥ len
         assert_eq!(h.list_row_at(10, 1), None); // above the list
         assert_eq!(h.list_row_at(80, 2), None); // right of the area
+    }
+
+    #[test]
+    fn list_row_at_maps_two_line_rows() {
+        let h = Hits {
+            list: Some(ListHits {
+                area: Rect::new(0, 2, 80, 6), // 3 items tall at row_h 2
+                offset: 0,
+                len: 5,
+                row_h: 2,
+            }),
+            ..Hits::default()
+        };
+        assert_eq!(h.list_row_at(10, 2), Some(0)); // line 1 of item 0
+        assert_eq!(h.list_row_at(10, 3), Some(0)); // line 2 of item 0 still selects 0
+        assert_eq!(h.list_row_at(10, 4), Some(1)); // item 1
+        assert_eq!(h.list_row_at(10, 7), Some(2)); // item 2 second line
     }
 }

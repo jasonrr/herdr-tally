@@ -5,6 +5,7 @@
 //! point of the Rust port).
 mod app;
 mod markdown;
+mod time;
 mod view;
 
 use std::io::stdout;

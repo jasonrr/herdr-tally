@@ -1376,6 +1376,7 @@ mod tests {
             area: Rect::new(0, 2, 80, 20),
             offset: 0,
             len: 2,
+            row_h: 1,
         });
         let click = |row| MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
