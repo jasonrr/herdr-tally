@@ -123,7 +123,7 @@ fn handle(req: RpcRequest, resolve: &Resolve) -> Option<RpcResponse> {
             resp.result = Some(json!({
                 "protocolVersion": pv,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "herdr-notes", "version": "0.1.0"},
+                "serverInfo": {"name": "tally", "version": "0.1.0"},
             }));
         }
         "ping" => resp.result = Some(json!({})),
@@ -210,7 +210,7 @@ mod tests {
         );
 
         let init: Value = serde_json::from_str(lines[0]).unwrap();
-        assert_eq!(init["result"]["serverInfo"]["name"], "herdr-notes");
+        assert_eq!(init["result"]["serverInfo"]["name"], "tally");
         assert!(
             init["result"]["protocolVersion"]
                 .as_str()

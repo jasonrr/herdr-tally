@@ -40,7 +40,7 @@ if [ -z "$existing" ]; then
   project="$(printf '%s' "${HERDR_PLUGIN_CONTEXT_JSON:-}" \
     | jq -r '.focused_pane_cwd // .workspace_cwd // empty' 2>/dev/null || true)"
   project="${project:-$PWD}"
-  "$herdr" plugin pane open --plugin herdr-notes --entrypoint "$kind" \
+  "$herdr" plugin pane open --plugin tally --entrypoint "$kind" \
     --placement split --direction right --cwd "$project" --focus
 elif [ "$focused" = "true" ]; then
   "$herdr" pane close "$existing"

@@ -1,5 +1,5 @@
 //! TUI adapter: ratatui + crossterm rewrite of the Go bubbletea panes. Entry
-//! is `herdr-notes tui <todos|scratchpads> [--project PATH]`; the Docs tab is
+//! is `tally tui <todos|scratchpads> [--project PATH]`; the Docs tab is
 //! reachable from either via key 3 or a tab click. Mouse is first-class:
 //! SGR capture is enabled and every mode handles wheel + click (the whole
 //! point of the Rust port).
@@ -26,7 +26,7 @@ use app::{App, Tab};
 const POLL: Duration = Duration::from_secs(2);
 
 pub fn run(args: &[String]) -> ExitCode {
-    let usage = "usage: herdr-notes tui <todos|scratchpads> [--project PATH]";
+    let usage = "usage: tally tui <todos|scratchpads> [--project PATH]";
     let Some(kind) = args.first() else {
         eprintln!("{usage}");
         return ExitCode::from(2);

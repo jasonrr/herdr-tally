@@ -21,7 +21,7 @@ impl TempDir {
             .unwrap()
             .as_nanos();
         let p = std::env::temp_dir().join(format!(
-            "herdr-notes-rs-test-{}-{nanos}-{n}",
+            "tally-rs-test-{}-{nanos}-{n}",
             std::process::id()
         ));
         std::fs::create_dir_all(&p).unwrap();

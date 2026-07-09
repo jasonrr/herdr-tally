@@ -90,7 +90,7 @@ struct TailOut<'a> {
 pub(crate) fn run(args: &[String], store_root: Option<&Path>, out: &mut dyn Write) -> i32 {
     if args.is_empty() {
         return fail(
-            "usage: herdr-notes scratchpads <list|read|create|update|append|append-section|edit|rename|find|tail|clear|archive|unarchive|delete|save-to-file|load-from-file|tags>",
+            "usage: tally scratchpads <list|read|create|update|append|append-section|edit|rename|find|tail|clear|archive|unarchive|delete|save-to-file|load-from-file|tags>",
         );
     }
     let sub = args[0].as_str();

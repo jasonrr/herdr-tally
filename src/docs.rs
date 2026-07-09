@@ -42,7 +42,7 @@ fn env_nonempty(key: &str) -> Option<String> {
 /// separate from `config_file` so tests can exercise the precedence without
 /// mutating process env. Mirrors Go's `configFile`: `HERDR_PLUGIN_CONFIG_DIR`
 /// (set by herdr for every plugin command) is used as-is; otherwise
-/// `${XDG_CONFIG_HOME:-~/.config}/herdr-notes`.
+/// `${XDG_CONFIG_HOME:-~/.config}/tally`.
 fn config_file_from(
     plugin_config_dir: Option<String>,
     xdg_config_home: Option<String>,
@@ -51,9 +51,9 @@ fn config_file_from(
     let dir = if let Some(d) = plugin_config_dir {
         Some(PathBuf::from(d))
     } else if let Some(x) = xdg_config_home {
-        Some(PathBuf::from(x).join("herdr-notes"))
+        Some(PathBuf::from(x).join("tally"))
     } else {
-        home.map(|h| PathBuf::from(h).join(".config").join("herdr-notes"))
+        home.map(|h| PathBuf::from(h).join(".config").join("tally"))
     };
     dir.map(|d| d.join("doc-paths"))
 }
@@ -212,7 +212,7 @@ mod tests {
                 .as_nanos();
             let n = COUNTER.fetch_add(1, Ordering::Relaxed);
             let p = std::env::temp_dir().join(format!(
-                "herdr-notes-docs-{}-{}-{}",
+                "tally-docs-{}-{}-{}",
                 std::process::id(),
                 nanos,
                 n
@@ -289,15 +289,15 @@ mod tests {
 
     #[test]
     fn config_file_xdg_fallback() {
-        // No plugin dir: XDG_CONFIG_HOME wins over HOME and gets /herdr-notes.
+        // No plugin dir: XDG_CONFIG_HOME wins over HOME and gets /tally.
         let got = config_file_from(None, Some("/x".to_string()), Some("/h".to_string()));
-        assert_eq!(got, Some(PathBuf::from("/x/herdr-notes/doc-paths")));
+        assert_eq!(got, Some(PathBuf::from("/x/tally/doc-paths")));
     }
 
     #[test]
     fn config_file_home_fallback() {
         let got = config_file_from(None, None, Some("/h".to_string()));
-        assert_eq!(got, Some(PathBuf::from("/h/.config/herdr-notes/doc-paths")));
+        assert_eq!(got, Some(PathBuf::from("/h/.config/tally/doc-paths")));
     }
 
     // --- listing (list_test.go) ---

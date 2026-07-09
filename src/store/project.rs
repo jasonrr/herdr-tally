@@ -14,13 +14,16 @@ pub struct Project {
 }
 
 fn store_root() -> PathBuf {
+    // Data lives under `tally/` (renamed from the original `herdr-notes/`; the live
+    // dir was moved to match). The store *key* below (project_key) is unaffected —
+    // it hashes the project path, not the app name — so the Go golden test still holds.
     if let Ok(x) = std::env::var("XDG_STATE_HOME")
         && !x.is_empty()
     {
-        return PathBuf::from(x).join("herdr-notes");
+        return PathBuf::from(x).join("tally");
     }
     let home = std::env::var("HOME").unwrap_or_default();
-    PathBuf::from(home).join(".local/state/herdr-notes")
+    PathBuf::from(home).join(".local/state/tally")
 }
 
 pub fn project_key(abs: &str) -> String {

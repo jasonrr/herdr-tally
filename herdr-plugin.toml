@@ -1,5 +1,5 @@
-id = "herdr-notes"
-name = "herdr-notes"
+id = "tally"
+name = "tally"
 version = "0.1.0"
 description = "Project-scoped todos & scratchpads for you and your agents."
 min_herdr_version = "0.7.0"
@@ -9,7 +9,7 @@ platforms = ["macos"]
 platforms = ["macos"]
 # `rm -f` before cp: overwriting a signed Mach-O in place leaves a stale kernel
 # signature cache that SIGKILLs the binary at exec (Killed: 9). A fresh inode avoids it.
-command = ["/bin/sh", "-c", "export PATH=\"$HOME/.cargo/bin:/opt/homebrew/bin:$PATH\"; cargo build --release && mkdir -p bin && rm -f bin/herdr-notes && cp target/release/herdr-notes bin/herdr-notes"]
+command = ["/bin/sh", "-c", "export PATH=\"$HOME/.cargo/bin:/opt/homebrew/bin:$PATH\"; cargo build --release && mkdir -p bin && rm -f bin/tally && cp target/release/tally bin/tally"]
 
 # NOTE: panes open with cwd = the user's project (not the plugin root), and herdr
 # only resolves a relative *program* against the plugin root — not a script passed
@@ -19,13 +19,13 @@ command = ["/bin/sh", "-c", "export PATH=\"$HOME/.cargo/bin:/opt/homebrew/bin:$P
 id = "todos"
 title = "Todos"
 placement = "split"
-command = ["bash", "-c", 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"; exec "$HERDR_PLUGIN_ROOT/bin/herdr-notes" tui todos']
+command = ["bash", "-c", 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"; exec "$HERDR_PLUGIN_ROOT/bin/tally" tui todos']
 
 [[panes]]
 id = "scratchpads"
 title = "Scratchpads"
 placement = "split"
-command = ["bash", "-c", 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"; exec "$HERDR_PLUGIN_ROOT/bin/herdr-notes" tui scratchpads']
+command = ["bash", "-c", 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"; exec "$HERDR_PLUGIN_ROOT/bin/tally" tui scratchpads']
 
 [[actions]]
 id = "toggle-todos"

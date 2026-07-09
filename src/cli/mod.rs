@@ -15,12 +15,12 @@ mod render;
 mod scratchpads;
 mod todos;
 
-/// `herdr-notes todos …` entry: real store root, stdout.
+/// `tally todos …` entry: real store root, stdout.
 pub fn todos(args: &[String]) -> ExitCode {
     exit(todos::run(args, None, &mut io::stdout()))
 }
 
-/// `herdr-notes scratchpads …` entry: real store root, stdout.
+/// `tally scratchpads …` entry: real store root, stdout.
 pub fn scratchpads(args: &[String]) -> ExitCode {
     exit(scratchpads::run(args, None, &mut io::stdout()))
 }

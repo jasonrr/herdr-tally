@@ -53,7 +53,7 @@ struct TodoListOut<'a> {
 pub(crate) fn run(args: &[String], store_root: Option<&Path>, out: &mut dyn Write) -> i32 {
     if args.is_empty() {
         return fail(
-            "usage: herdr-notes todos <list|get|create|update|delete|complete|incomplete|add-tag|remove-tag|set-blockers|add-blocker|remove-blocker|lock|unlock|tags>",
+            "usage: tally todos <list|get|create|update|delete|complete|incomplete|add-tag|remove-tag|set-blockers|add-blocker|remove-blocker|lock|unlock|tags>",
         );
     }
     let sub = args[0].as_str();
