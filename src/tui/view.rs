@@ -62,8 +62,6 @@ pub struct ListHits {
     /// First visible row index (cursor-follow scrolling).
     pub offset: usize,
     pub len: usize,
-    /// Terminal lines per item (2 for Todos, else 1).
-    pub row_h: u16,
 }
 
 pub struct MetaHits {
@@ -111,8 +109,7 @@ impl Hits {
         if !l.area.contains(Position::new(x, y)) {
             return None;
         }
-        let rh = l.row_h.max(1);
-        let i = ((y - l.area.y) / rh) as usize + l.offset;
+        let i = (y - l.area.y) as usize + l.offset;
         if i < l.len { Some(i) } else { None }
     }
 
@@ -210,15 +207,19 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
                 } else {
                     ""
                 };
-                let line1 = format!("{glyph} [{}] {}{blocked}", t.priority, t.title);
+                let left = format!("{glyph} [{}] {}{blocked}", t.priority, t.title);
                 let rel = crate::tui::time::humanize_since(&t.updated, now);
-                let meta = match &t.lock {
-                    Some(l) if !l.owner.is_empty() => format!("    🔒 {} · {}", l.owner, rel),
-                    _ => format!("    {}", rel),
+                let right = match &t.lock {
+                    Some(l) if !l.owner.is_empty() => format!("🔒 {} {}", l.owner, rel),
+                    _ => rel,
                 };
-                let sel = i == cursor;
-                rows.push(styled_row(line1, sel, cursor_style));
-                rows.push(styled_meta(meta, sel, cursor_style));
+                rows.push(right_aligned_row(
+                    left,
+                    right,
+                    list_area.width as usize,
+                    i == cursor,
+                    cursor_style,
+                ));
             }
         }
         Tab::Scratchpads => {
@@ -235,8 +236,10 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
             }
             for (i, s) in vis.iter().enumerate() {
                 let rel = crate::tui::time::humanize_since(&s.updated, now);
-                rows.push(styled_row(
-                    format!("• {} · {}", s.title, rel),
+                rows.push(right_aligned_row(
+                    format!("• {}", s.title),
+                    rel,
+                    list_area.width as usize,
                     i == cursor,
                     cursor_style,
                 ));
@@ -265,10 +268,9 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
     let len = app.count();
 
     // keep the cursor row on screen (the Go pane just overflowed)
-    let row_h: u16 = if app.tab == Tab::Todos { 2 } else { 1 };
-    let h_items = (list_area.height / row_h.max(1)) as usize;
-    let offset = if h_items > 0 && len > 0 && cursor >= h_items {
-        cursor - h_items + 1
+    let h = list_area.height as usize;
+    let offset = if h > 0 && len > 0 && cursor >= h {
+        cursor - h + 1
     } else {
         0
     };
@@ -276,17 +278,13 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
         area: list_area,
         offset,
         len,
-        row_h,
     });
 
     if app.mode == Mode::Confirm {
         rows.push(Line::from(""));
         rows.push(Line::from("  Delete selected item? "));
     }
-    f.render_widget(
-        Paragraph::new(rows).scroll(((offset as u16) * row_h, 0)),
-        list_area,
-    );
+    f.render_widget(Paragraph::new(rows).scroll((offset as u16, 0)), list_area);
 }
 
 fn styled_row(row: String, selected: bool, cursor_style: Style) -> Line<'static> {
@@ -297,12 +295,38 @@ fn styled_row(row: String, selected: bool, cursor_style: Style) -> Line<'static>
     }
 }
 
-fn styled_meta(row: String, selected: bool, cursor_style: Style) -> Line<'static> {
-    let line = Line::from(row).dim();
-    if selected {
-        line.style(cursor_style)
+/// A list row with `left` text and `right` text pinned to the right edge of
+/// `width` columns. When they'd collide, `left` is truncated with `…`. The
+/// whole row is padded to `width` so the cursor highlight spans edge-to-edge.
+fn right_aligned_row(
+    left: String,
+    right: String,
+    width: usize,
+    selected: bool,
+    cursor_style: Style,
+) -> Line<'static> {
+    let row = pad_right_aligned(left, &right, width);
+    styled_row(row, selected, cursor_style)
+}
+
+/// Places `right` at the right edge of `width` columns (char-counted, matching
+/// the rest of this file's column math), truncating `left` with `…` when the
+/// two would overlap. Empty `right` returns `left` unchanged.
+fn pad_right_aligned(left: String, right: &str, width: usize) -> String {
+    if right.is_empty() {
+        return left;
+    }
+    let rw = right.chars().count();
+    let lw = left.chars().count();
+    let avail = width.saturating_sub(rw + 1); // room for right + a one-space gap
+    if lw <= avail {
+        let pad = width - rw - lw;
+        format!("{left}{}{right}", " ".repeat(pad))
     } else {
-        line
+        // truncate left, leaving room for the ellipsis + gap + right
+        let keep = avail.saturating_sub(1);
+        let truncated: String = left.chars().take(keep).collect();
+        format!("{truncated}… {right}")
     }
 }
 
@@ -604,7 +628,6 @@ mod tests {
                 area: Rect::new(0, 2, 80, 5),
                 offset: 3,
                 len: 7,
-                row_h: 1,
             }),
             ..Hits::default()
         };
@@ -616,19 +639,19 @@ mod tests {
     }
 
     #[test]
-    fn list_row_at_maps_two_line_rows() {
-        let h = Hits {
-            list: Some(ListHits {
-                area: Rect::new(0, 2, 80, 6), // 3 items tall at row_h 2
-                offset: 0,
-                len: 5,
-                row_h: 2,
-            }),
-            ..Hits::default()
-        };
-        assert_eq!(h.list_row_at(10, 2), Some(0)); // line 1 of item 0
-        assert_eq!(h.list_row_at(10, 3), Some(0)); // line 2 of item 0 still selects 0
-        assert_eq!(h.list_row_at(10, 4), Some(1)); // item 1
-        assert_eq!(h.list_row_at(10, 7), Some(2)); // item 2 second line
+    fn pad_right_aligned_pads_and_truncates() {
+        // fits: right pinned to the edge, one-space min gap, total == width
+        let got = pad_right_aligned("todo".to_string(), "3h", 12);
+        assert_eq!(got, "todo      3h");
+        assert_eq!(got.chars().count(), 12);
+        // collides: left truncated with "… " before the right text, total == width
+        let got = pad_right_aligned("a very long title".to_string(), "3h", 12);
+        assert_eq!(got, "a very l… 3h");
+        assert_eq!(got.chars().count(), 12);
+        // empty right: left returned unchanged (Plans rows have no time)
+        assert_eq!(
+            pad_right_aligned("• spec.md".to_string(), "", 12),
+            "• spec.md"
+        );
     }
 }
