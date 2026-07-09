@@ -400,6 +400,7 @@ impl App {
             }
             KeyCode::Char('e') | KeyCode::Enter if self.tab != Tab::Plans => self.begin_edit(),
             KeyCode::Char('y') => self.yank(),
+            KeyCode::Char('Y') => self.yank_content(),
             // body scrolling (clamped against the rendered height at draw time)
             KeyCode::Char('j') | KeyCode::Down => self.scroll_read(1),
             KeyCode::Char('k') | KeyCode::Up => self.scroll_read(-1),
@@ -928,12 +929,35 @@ impl App {
         self.reload();
     }
 
+    fn yank_id_target(&self) -> Option<String> {
+        self.selected_id()
+    }
+
+    fn yank_content_target(&self) -> Option<String> {
+        if self.read_body.is_empty() {
+            None
+        } else {
+            Some(self.read_body.clone())
+        }
+    }
+
     fn yank(&mut self) {
-        let Some(id) = self.selected_id() else {
+        let Some(id) = self.yank_id_target() else {
             return;
         };
         match clipboard_write(&id) {
             Ok(()) => self.status = format!("copied {id} to clipboard"),
+            Err(e) => self.status = format!("copy failed: {e}"),
+        }
+    }
+
+    fn yank_content(&mut self) {
+        let Some(c) = self.yank_content_target() else {
+            return;
+        };
+        let n = c.len();
+        match clipboard_write(&c) {
+            Ok(()) => self.status = format!("copied {n} bytes to clipboard"),
             Err(e) => self.status = format!("copy failed: {e}"),
         }
     }
@@ -1010,6 +1034,20 @@ mod tests {
             };
             app.p.create_todo(title, "", prio, tags).unwrap();
         }
+        app.reload();
+        std::mem::forget(root);
+        std::mem::forget(repo);
+        app
+    }
+
+    /// Builds an App on the Scratchpads tab, pre-loaded with one scratchpad.
+    /// Mirrors `test_app_with_todos`.
+    fn test_app_with_scratchpad(name: &str, content: &str) -> App {
+        let root = TempDir::new();
+        let repo = git_repo();
+        let p = resolve_project_in(root.path(), Some(&repo.path().to_string_lossy())).unwrap();
+        let mut app = App::new(p, Tab::Scratchpads);
+        app.p.create_scratchpad(name, content, vec![]).unwrap();
         app.reload();
         std::mem::forget(root);
         std::mem::forget(repo);
@@ -1456,5 +1494,18 @@ mod tests {
         assert_eq!(f.app.todos[0].title, "open");
         f.app.on_key(key(KeyCode::Char('c'))); // show again
         assert_eq!(f.app.todos.len(), 2, "completed restored");
+    }
+
+    #[test]
+    fn yank_targets_id_and_content() {
+        let mut app = test_app_with_scratchpad("Notes", "line one\nline two");
+        app.tab = Tab::Scratchpads;
+        app.reload();
+        app.enter_read(); // loads read_body
+        assert_eq!(
+            app.yank_content_target().as_deref(),
+            Some("line one\nline two")
+        );
+        assert_eq!(app.yank_id_target(), app.selected_id());
     }
 }

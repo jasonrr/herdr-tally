@@ -447,9 +447,9 @@ fn footer(app: &App) -> &'static str {
             Tab::Plans => "↑↓ move · enter read · / filter · 1·2·3 · r · q",
         },
         Mode::Read => match app.tab {
-            Tab::Todos => "space done · p prio · e edit · y yank · R raw · esc back",
-            Tab::Scratchpads => "e edit · y yank · R raw · esc back",
-            Tab::Plans => "y yank · R raw · esc back",
+            Tab::Todos => "space done · p prio · e edit · y id · Y copy · R raw · esc back",
+            Tab::Scratchpads => "e edit · y id · Y copy · R raw · esc back",
+            Tab::Plans => "y id · Y copy · R raw · esc back",
         },
         Mode::Confirm => "y confirm · n/esc cancel",
         Mode::Edit => match app.tab {
