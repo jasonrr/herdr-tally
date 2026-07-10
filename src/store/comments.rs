@@ -11,7 +11,7 @@ use super::errors::{Error, Result};
 use super::ids::new_id;
 use super::lock::{atomic_write, with_file_lock};
 use super::project::Project;
-use super::todos::now;
+use super::todos::{epoch_from_rfc3339, format_rfc3339, now};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -110,6 +110,41 @@ impl Project {
         self.add_comment_kind(target, "", "event", text)
     }
 
+    /// Every comment in the store, file order (chronological). The primitive
+    /// the recent/summary queries share.
+    pub(crate) fn all_comments(&self) -> Result<Vec<Comment>> {
+        Ok(self.load_comments()?.comments)
+    }
+
+    /// Comments at or after `cutoff` (an RFC3339 string; "" = all time),
+    /// optionally filtered by author, notes-only unless include_events.
+    /// Newest-first.
+    pub fn recent_comments(
+        &self,
+        cutoff: &str,
+        author: Option<&str>,
+        include_events: bool,
+    ) -> Result<Vec<Comment>> {
+        let mut v: Vec<Comment> = self
+            .all_comments()?
+            .into_iter()
+            .filter(|c| c.created.as_str() >= cutoff)
+            .filter(|c| include_events || c.kind == "note")
+            .filter(|c| author.is_none_or(|a| c.author == a))
+            .collect();
+        // Sort by `created` descending (RFC3339/Z sorts lexically = chronologically).
+        // Not just a reverse of file order: appends are chronological in normal
+        // operation, but nothing stops a caller from seeding an out-of-order
+        // backdated entry (as the tests do), so sort on the actual timestamp.
+        v.sort_by(|a, b| b.created.cmp(&a.created));
+        Ok(v)
+    }
+
+    /// Window ("30m"/"2h"/"1d") -> RFC3339 cutoff string via the store clock.
+    pub fn recency_cutoff(&self, window: &str) -> String {
+        duration_cutoff(&now(), window)
+    }
+
     /// All comments for a target, oldest first (creation order — appends are
     /// serialized under the file flock, so file order is chronological).
     pub fn list_comments(&self, target: &str) -> Result<Vec<Comment>> {
@@ -161,6 +196,30 @@ impl Project {
             }
         }
         Ok(m)
+    }
+}
+
+/// N{s,m,h,d} -> seconds. None on any other shape.
+fn parse_window(w: &str) -> Option<u64> {
+    let w = w.trim();
+    let (num, unit) = w.split_at(w.len().checked_sub(1)?);
+    let n: u64 = num.parse().ok()?;
+    let mult = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3_600,
+        "d" => 86_400,
+        _ => return None,
+    };
+    n.checked_mul(mult)
+}
+
+/// `now` minus `window`, as an RFC3339 cutoff string. Malformed window (or
+/// unparseable now) -> "" so a typo degrades to "all time", never an error.
+fn duration_cutoff(now: &str, window: &str) -> String {
+    match (parse_window(window), epoch_from_rfc3339(now)) {
+        (Some(w), Some(base)) => format_rfc3339(base.saturating_sub(w)),
+        _ => String::new(),
     }
 }
 
@@ -275,5 +334,69 @@ mod tests {
             before,
             "failed update must not log an event"
         );
+    }
+
+    #[test]
+    fn test_duration_cutoff() {
+        let now = "2026-07-10T12:00:00Z";
+        assert_eq!(duration_cutoff(now, "2h"), "2026-07-10T10:00:00Z");
+        assert_eq!(duration_cutoff(now, "30m"), "2026-07-10T11:30:00Z");
+        assert_eq!(duration_cutoff(now, "1d"), "2026-07-09T12:00:00Z");
+        assert_eq!(duration_cutoff(now, "90s"), "2026-07-10T11:58:30Z");
+        // malformed / empty -> "all time" (empty string), never a panic
+        assert_eq!(duration_cutoff(now, "xyz"), "");
+        assert_eq!(duration_cutoff(now, ""), "");
+        assert_eq!(duration_cutoff(now, "2"), "");
+    }
+
+    #[test]
+    fn test_recent_comments_cutoff_author_events() {
+        let mut tp = new_project();
+        tp.p.actor = "jason".to_string();
+        tp.add_comment("t_a", "", "fresh note").unwrap(); // created = now()
+        // Seed a backdated note + an event directly (tests module can reach the
+        // private load/save on the store).
+        let mut cf = tp.load_comments().unwrap();
+        cf.comments.push(Comment {
+            id: "c_old".into(),
+            target: "t_a".into(),
+            section: String::new(),
+            author: "ana".into(),
+            created: "2000-01-01T00:00:00Z".into(),
+            kind: "note".into(),
+            text: "old note".into(),
+        });
+        cf.comments.push(Comment {
+            id: "c_ev".into(),
+            target: "t_a".into(),
+            section: String::new(),
+            author: "jason".into(),
+            created: "2026-07-10T12:00:00Z".into(),
+            kind: "event".into(),
+            text: "marked done".into(),
+        });
+        tp.save_comments(&cf).unwrap();
+
+        // cutoff excludes the 2000 note, keeps the fresh note; events off by default
+        let cutoff = "2020-01-01T00:00:00Z";
+        let r = tp.recent_comments(cutoff, None, false).unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].text, "fresh note");
+
+        // include_events widens; boundary is inclusive (event created == cutoff)
+        let r = tp
+            .recent_comments("2026-07-10T12:00:00Z", None, true)
+            .unwrap();
+        assert!(r.iter().any(|c| c.text == "marked done"));
+
+        // author filter
+        let r = tp.recent_comments("", Some("ana"), false).unwrap();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].text, "old note");
+
+        // newest-first: empty cutoff (all time), notes only -> [fresh, old]
+        let r = tp.recent_comments("", None, false).unwrap();
+        assert_eq!(r.first().unwrap().text, "fresh note");
+        assert_eq!(r.last().unwrap().text, "old note");
     }
 }
