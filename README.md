@@ -26,13 +26,15 @@ survives any single session and both of you are looking at the same page.
 
 ## What it does
 
-You and your agents share two things, both scoped to the current project (inferred
+You and your agents share three things, all scoped to the current project (inferred
 from the git repo you're in):
 
 - **Todos** — one per follow-up, blocker, or piece of work. Priorities, tags,
   blockers, and a lock so whoever's editing the work can claim it.
 - **Scratchpads** — longer-lived working context: the plan before a multi-step
   task, a handoff ("here's where I left off"), snippets too big for a todo.
+- **Comments** — margin notes on any todo, scratchpad, or plan: flag a decision or
+  a blocker, then read them back across everything with `tally comments recent`.
 
 Anything an agent writes, you see immediately in a live herdr pane — and anything
 you jot down, the agent reads back. It's a two-way ledger, not a one-way log.
@@ -42,7 +44,7 @@ One store, three thin adapters over it:
 | Adapter | For | Surface |
 |---------|-----|---------|
 | **CLI** | you, at the terminal | `tally todos …` / `tally scratchpads …` |
-| **MCP** | your agents | 33 `todo_*` / `scratchpad_*` tools over stdio |
+| **MCP** | your agents | 38 `todo_*` / `scratchpad_*` / `comment_*` tools over stdio |
 | **TUI** | the herdr pane | `tally tui todos` / `tally tui scratchpads` |
 
 The `store` is the single source of truth; the adapters just call into it. Data
@@ -84,6 +86,11 @@ tally todos complete <id>
 tally scratchpads create --name "Auth refactor plan" --content-file -   # reads stdin
 tally scratchpads read <id> --mode headings
 tally scratchpads append-section <id> --heading "Progress" --content "done X" --expected-revision <r>
+
+# Comments — margin notes on a todo, scratchpad, or plan
+tally comments add <id> --body "hold off — waiting on the auth PR"
+tally comments recent --since 2h            # newest-first across every target (default 24h)
+tally comments targets                      # which items carry notes, with a snippet
 ```
 
 Scratchpad writes take an expected revision — `read` returns the current one, you
