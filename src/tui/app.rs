@@ -3,7 +3,7 @@
 //! methods driven by the crossterm event loop in mod.rs, and mouse hit-testing
 //! reads the regions the last draw recorded in `Hits` (view.rs) instead of
 //! hardcoded column math.
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -11,7 +11,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use edtui::actions::CopySelection;
 use edtui::clipboard::ClipboardTrait;
 use edtui::{EditorEventHandler, EditorMode, EditorState, Lines};
-use ratatui::text::Text;
+use ratatui::text::{Line, Text};
 
 use crate::plans::{self, Plan};
 use crate::store::{Project, Scratchpad, Todo, TodoFilter, TodoUpdate};
@@ -65,6 +65,9 @@ pub struct App {
     /// Ids of blocked todos, computed once per reload, not per frame. Id-keyed
     /// (not positional) so it survives the `/` filter narrowing `todos`' indices.
     pub blocked: HashSet<String>,
+    /// target -> note count, id/rel_path-keyed so it survives filter re-indexing
+    /// (same discipline as `blocked`). Notes only — events are excluded upstream.
+    pub comment_counts: HashMap<String, usize>,
     pub pads: Vec<Scratchpad>,
     pub plans: Vec<Plan>,
     pub cursor: [usize; 3],
@@ -183,6 +186,7 @@ impl App {
             quit: false,
             todos: Vec::new(),
             blocked: HashSet::new(),
+            comment_counts: HashMap::new(),
             pads: Vec::new(),
             plans: Vec::new(),
             cursor: [0; 3],
@@ -269,6 +273,7 @@ impl App {
             Err(e) => self.status = format!("load failed: {e}"),
         }
         self.plans = plans::list(&self.p.path, &plans::load_plan_paths());
+        self.comment_counts = self.p.comment_counts().unwrap_or_default();
 
         if matches!(self.mode, Mode::Read | Mode::Edit | Mode::DiscardConfirm)
             && !self.read_id.is_empty()
@@ -279,6 +284,9 @@ impl App {
             self.pin_cursor_to(&id);
         }
         self.clamp_cursor();
+        if self.mode == Mode::Read {
+            self.rebuild_read_text();
+        }
     }
 
     /// The Plans list after the active filter (case-insensitive substring over
@@ -376,6 +384,21 @@ impl App {
                 .visible_plans()
                 .get(i)
                 .map(|d| d.abs_path.to_string_lossy().into_owned()),
+        }
+    }
+
+    /// The comment target for the current read view. For todos/pads this is the
+    /// store id (`read_id`); for plans `read_id` is an abs_path, so map it back
+    /// to the portable rel_path the store keys on.
+    pub fn read_target(&self) -> String {
+        if self.tab == Tab::Plans {
+            self.plans
+                .iter()
+                .find(|d| d.abs_path.to_string_lossy() == self.read_id)
+                .map(|d| d.rel_path.clone())
+                .unwrap_or_else(|| self.read_id.clone())
+        } else {
+            self.read_id.clone()
         }
     }
 
@@ -883,11 +906,21 @@ impl App {
     }
 
     pub fn rebuild_read_text(&mut self) {
-        self.read_text = if self.raw {
+        let mut text = if self.raw {
             Text::raw(self.read_body.clone())
         } else {
             markdown::render(&self.read_body)
         };
+        let comments = self.p.list_comments(&self.read_target()).unwrap_or_default();
+        if !comments.is_empty() {
+            let headings = crate::store::parse_headings(&self.read_body);
+            let now = crate::tui::time::now_unix();
+            text.lines.push(Line::from("")); // spacer between body and thread
+            for l in crate::tui::view::comment_block(&comments, &headings, now) {
+                text.lines.push(l);
+            }
+        }
+        self.read_text = text;
         self.read_gen = self.read_gen.wrapping_add(1);
     }
 
