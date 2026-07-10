@@ -245,7 +245,7 @@ impl Project {
         self.scratch_dir().join(format!("{id}.md"))
     }
 
-    fn read_pad(&self, id: &str) -> Result<Scratchpad> {
+    pub(crate) fn read_pad(&self, id: &str) -> Result<Scratchpad> {
         match std::fs::read(self.pad_path(id)) {
             Ok(b) => Ok(parse_pad(&b)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(Error::NotFound),

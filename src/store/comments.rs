@@ -45,6 +45,16 @@ struct CommentsFile {
     comments: Vec<Comment>,
 }
 
+/// One row of the per-target comment view: note count + the most recent
+/// note's text (snippet) and timestamp (for ordering).
+#[derive(Debug, Clone, Serialize)]
+pub struct CommentSummary {
+    pub target: String,
+    pub count: usize,
+    pub latest: String,
+    pub created: String,
+}
+
 /// Normalize a target key: drop a leading "./" so "./docs/x.md" and "docs/x.md"
 /// are the same target. (Todo/pad ids are unaffected.)
 fn norm_target(t: &str) -> &str {
@@ -196,6 +206,69 @@ impl Project {
             }
         }
         Ok(m)
+    }
+
+    /// One row per target that has notes: count + most-recent note snippet.
+    /// Notes only (events don't accrue badges). Newest-commented target first.
+    pub fn comment_summaries(&self) -> Result<Vec<CommentSummary>> {
+        // target -> (count, latest_text, latest_created, latest_idx). File
+        // order is chronological, so ">=" keeps the last note seen as the
+        // latest; `created` has only second resolution, so the file-order
+        // index breaks ties deterministically instead of falling back to
+        // HashMap iteration order.
+        let mut by: HashMap<String, (usize, String, String, usize)> = HashMap::new();
+        for (i, c) in self.all_comments()?.into_iter().enumerate() {
+            if c.kind != "note" {
+                continue;
+            }
+            let e = by
+                .entry(c.target)
+                .or_insert((0, String::new(), String::new(), 0));
+            e.0 += 1;
+            if c.created >= e.2 {
+                e.1 = c.text;
+                e.2 = c.created;
+                e.3 = i;
+            }
+        }
+        let mut out: Vec<(CommentSummary, usize)> = by
+            .into_iter()
+            .map(|(target, (count, latest, created, idx))| {
+                (
+                    CommentSummary {
+                        target,
+                        count,
+                        latest,
+                        created,
+                    },
+                    idx,
+                )
+            })
+            .collect();
+        // newest target first; ties broken by file order (later = newer)
+        out.sort_by(|a, b| b.0.created.cmp(&a.0.created).then(b.1.cmp(&a.1)));
+        Ok(out.into_iter().map(|(s, _)| s).collect())
+    }
+
+    /// Human label for a comment target: t_… -> "☐/☑ <todo title>",
+    /// s_… -> "• <pad title>", anything else (plan rel_path or an
+    /// unresolvable id) -> the raw target string.
+    pub fn resolve_target_label(&self, target: &str) -> String {
+        if target.starts_with("t_") {
+            if let Ok(t) = self.get_todo(target) {
+                let glyph = if t.status == "completed" {
+                    "☑"
+                } else {
+                    "☐"
+                };
+                return format!("{glyph} {}", t.title);
+            }
+        } else if target.starts_with("s_") {
+            if let Ok(s) = self.read_pad(target) {
+                return format!("• {}", s.title);
+            }
+        }
+        target.to_string()
     }
 }
 
@@ -401,5 +474,32 @@ mod tests {
         let r = tp.recent_comments("", None, false).unwrap();
         assert_eq!(r.first().unwrap().text, "fresh note");
         assert_eq!(r.last().unwrap().text, "old note");
+    }
+
+    #[test]
+    fn test_comment_summaries_and_labels() {
+        let tp = new_project();
+        // Two targets: a real todo and a real pad; comment on each.
+        let t = tp.create_todo("Fix auth", "", "", Vec::new()).unwrap();
+        let s = tp
+            .create_scratchpad("Design notes", "# H\nbody", Vec::new())
+            .unwrap();
+        tp.add_comment(&t.id, "", "first").unwrap();
+        tp.add_comment(&s.id, "", "hold off").unwrap();
+        tp.add_comment(&t.id, "", "second").unwrap(); // latest note on the todo
+        tp.add_comment_event(&t.id, "marked done").unwrap(); // event: ignored by summaries
+
+        let sums = tp.comment_summaries().unwrap();
+        assert_eq!(sums.len(), 2);
+        // newest-commented target first == the todo (its 2nd note is most recent)
+        assert_eq!(sums[0].target, t.id);
+        assert_eq!(sums[0].count, 2); // notes only, event excluded
+        assert_eq!(sums[0].latest, "second");
+
+        // labels
+        assert_eq!(tp.resolve_target_label(&t.id), format!("☐ Fix auth"));
+        assert_eq!(tp.resolve_target_label(&s.id), format!("• Design notes"));
+        assert_eq!(tp.resolve_target_label("docs/plan.md"), "docs/plan.md");
+        assert_eq!(tp.resolve_target_label("t_gone"), "t_gone"); // unresolvable
     }
 }
