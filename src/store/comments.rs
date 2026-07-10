@@ -205,4 +205,27 @@ mod tests {
         assert!(tp.list_comments("s_pad").unwrap().is_empty());
         assert_eq!(tp.list_comments("t_x").unwrap().len(), 1);
     }
+
+    #[test]
+    fn test_todo_delete_cascades_comments() {
+        let tp = new_project();
+        let t = tp.create_todo("x", "", "", Vec::new()).unwrap();
+        tp.add_comment(&t.id, "", "a note").unwrap();
+        assert_eq!(tp.list_comments(&t.id).unwrap().len(), 1);
+        tp.delete_todo(&t.id).unwrap();
+        assert!(tp.list_comments(&t.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_pad_delete_cascades_only_on_success() {
+        let tp = new_project();
+        let s = tp.create_scratchpad("plan", "# H1\nbody", Vec::new()).unwrap();
+        tp.add_comment(&s.id, "H1", "anchored").unwrap();
+        // A wrong expected-revision must fail AND leave comments intact.
+        assert!(tp.delete_scratchpad(&s.id, 999).is_err());
+        assert_eq!(tp.list_comments(&s.id).unwrap().len(), 1);
+        // The real delete (rev 1, or -1 to skip the guard) cascades.
+        tp.delete_scratchpad(&s.id, s.revision).unwrap();
+        assert!(tp.list_comments(&s.id).unwrap().is_empty());
+    }
 }

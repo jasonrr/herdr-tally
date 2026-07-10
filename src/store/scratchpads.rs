@@ -410,7 +410,8 @@ impl Project {
             }
             std::fs::remove_file(&path)?;
             Ok(())
-        })
+        })?;
+        self.delete_comments_for_target(id)
     }
 
     /// exp_rev -1 skips the guard here by design (append is the documented

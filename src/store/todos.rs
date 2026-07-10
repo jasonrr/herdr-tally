@@ -233,7 +233,10 @@ impl Project {
                 t.blockers.retain(|b| b != id);
             }
             Ok(())
-        })
+        })?;
+        // Cascade comments (separate file/lock, acquired after the todos lock
+        // is released — same one-lock-per-file discipline as the store).
+        self.delete_comments_for_target(id)
     }
 
     fn set_complete(&self, id: &str, complete: bool, release_lock: bool) -> Result<Todo> {
