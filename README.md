@@ -2,9 +2,9 @@
       ┌─────────────────────────────╮
       │  t a l l y                  │
       │                             │   ╭── the herder's little book ──╮
-      │   ▌▌▌▌╱  sheep out ....  20  │   │  one gate, one ledger,       │
-      │   ▌▌▌▌╱  sheep in  ....  20  │   │  a stroke for every head     │
-      │   ▌▌▌ ╱  strays    ....   4  │   │  that passes through.        │
+      │   ▌▌▌▌╱  sheep out ....  20 │   │  one gate, one ledger,       │
+      │   ▌▌▌▌╱  sheep in  ....  20 │   │  a stroke for every head     │
+      │   ▌▌▌ ╱  strays    ....   4 │   │  that passes through.        │
       │                             │   ╰──────────────────────────────╯
       ╰─────────────────────────────╯
 ```
