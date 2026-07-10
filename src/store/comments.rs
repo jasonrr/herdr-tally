@@ -268,10 +268,10 @@ impl Project {
                 };
                 return format!("{glyph} {}", t.title);
             }
-        } else if target.starts_with("s_") {
-            if let Ok(s) = self.read_pad(target) {
-                return format!("• {}", s.title);
-            }
+        } else if target.starts_with("s_")
+            && let Ok(s) = self.read_pad(target)
+        {
+            return format!("• {}", s.title);
         }
         target.to_string()
     }

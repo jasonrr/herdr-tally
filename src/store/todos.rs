@@ -160,7 +160,14 @@ fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
 /// seconds. None for any other shape (callers degrade to "all time").
 pub(crate) fn epoch_from_rfc3339(s: &str) -> Option<u64> {
     let b = s.as_bytes();
-    if b.len() != 20 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || b[13] != b':' || b[16] != b':' || b[19] != b'Z' {
+    if b.len() != 20
+        || b[4] != b'-'
+        || b[7] != b'-'
+        || b[10] != b'T'
+        || b[13] != b':'
+        || b[16] != b':'
+        || b[19] != b'Z'
+    {
         return None;
     }
     let n = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
