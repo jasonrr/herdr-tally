@@ -716,7 +716,8 @@ impl App {
 
     pub fn on_paste(&mut self, text: String) {
         if self.mode == Mode::CommentInput {
-            self.comment_handler.on_paste_event(text, &mut self.comment_ed);
+            self.comment_handler
+                .on_paste_event(text, &mut self.comment_ed);
             return;
         }
         if self.mode == Mode::Edit {
@@ -1015,7 +1016,10 @@ impl App {
         } else {
             markdown::render(&self.read_body)
         };
-        let comments = self.p.list_comments(&self.read_target()).unwrap_or_default();
+        let comments = self
+            .p
+            .list_comments(&self.read_target())
+            .unwrap_or_default();
         if !comments.is_empty() {
             let headings = crate::store::parse_headings(&self.read_body);
             let now = crate::tui::time::now_unix();

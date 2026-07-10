@@ -418,7 +418,10 @@ mod tests {
     fn test_dispatch_comment_add_list_delete() {
         let e = Env::new();
         let add = e
-            .call("comment_add", r#"{"id":"t_x","body":"hi","section":"Phase 1"}"#)
+            .call(
+                "comment_add",
+                r#"{"id":"t_x","body":"hi","section":"Phase 1"}"#,
+            )
             .unwrap();
         assert_eq!(add["section"].as_str(), Some("Phase 1"));
         assert_eq!(add["text"].as_str(), Some("hi"));

@@ -241,7 +241,11 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
                     ""
                 };
                 let n = app.comment_counts.get(&t.id).copied().unwrap_or(0);
-                let badge = if n > 0 { format!(" 💬{n}") } else { String::new() };
+                let badge = if n > 0 {
+                    format!(" 💬{n}")
+                } else {
+                    String::new()
+                };
                 let left = format!("{glyph} [{}] {}{blocked}{badge}", t.priority, t.title);
                 let rel = crate::tui::time::humanize_since(&t.updated, now);
                 let right = match &t.lock {
@@ -272,7 +276,11 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
             for (i, s) in vis.iter().enumerate() {
                 let rel = crate::tui::time::humanize_since(&s.updated, now);
                 let n = app.comment_counts.get(&s.id).copied().unwrap_or(0);
-                let badge = if n > 0 { format!(" 💬{n}") } else { String::new() };
+                let badge = if n > 0 {
+                    format!(" 💬{n}")
+                } else {
+                    String::new()
+                };
                 rows.push(right_aligned_row(
                     format!("• {}{badge}", s.title),
                     rel,
@@ -295,7 +303,11 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
             }
             for (i, d) in vis.iter().enumerate() {
                 let n = app.comment_counts.get(&d.rel_path).copied().unwrap_or(0);
-                let badge = if n > 0 { format!(" 💬{n}") } else { String::new() };
+                let badge = if n > 0 {
+                    format!(" 💬{n}")
+                } else {
+                    String::new()
+                };
                 rows.push(styled_row(
                     format!("• {}{badge}", d.rel_path),
                     i == cursor,
@@ -462,7 +474,10 @@ mod comment_tests {
             .map(|l| l.to_string())
             .collect::<Vec<_>>()
             .join("\n");
-        assert!(!joined.contains("detached"), "should not be detached: {joined}");
+        assert!(
+            !joined.contains("detached"),
+            "should not be detached: {joined}"
+        );
         assert!(joined.contains("lower") && joined.contains("title"));
     }
 
@@ -666,7 +681,11 @@ fn draw_comment_anchor(app: &App, f: &mut Frame, area: Rect) {
         .iter()
         .enumerate()
         .map(|(i, o)| {
-            let marker = if i == app.comment_anchor_sel { "» " } else { "  " };
+            let marker = if i == app.comment_anchor_sel {
+                "» "
+            } else {
+                "  "
+            };
             let l = Line::from(format!("{marker}{o}"));
             if i == app.comment_anchor_sel {
                 l.add_modifier(Modifier::REVERSED)
@@ -707,7 +726,9 @@ fn draw_comment_input(app: &mut App, f: &mut Frame, area: Rect) {
     // terminal base colors, reversed cursor, and NO edtui status line — without
     // hide_status_line() edtui renders its default black box + "Insert" bar.
     let block = Block::bordered()
-        .title(format!(" new comment · {anchor} — ctrl+d save · esc cancel "))
+        .title(format!(
+            " new comment · {anchor} — ctrl+d save · esc cancel "
+        ))
         .border_style(Style::new().fg(Color::Cyan));
     let inner = block.inner(popup);
     f.render_widget(block, popup);
@@ -737,9 +758,9 @@ fn footer(app: &App) -> &'static str {
             Tab::Plans => "↑↓ · enter · / filter · r · ? help",
         },
         Mode::Read => match app.tab {
-            Tab::Todos => "space done · p prio · e edit · y id · Y copy · R raw · esc back",
-            Tab::Scratchpads => "e edit · y id · Y copy · R raw · esc back",
-            Tab::Plans => "y id · Y copy · R raw · esc back",
+            Tab::Todos => "space done · p prio · e edit · C comment · y id · R raw · esc back",
+            Tab::Scratchpads => "e edit · C comment · y id · Y copy · R raw · esc back",
+            Tab::Plans => "C comment · y id · Y copy · R raw · esc back",
         },
         Mode::Confirm => "y confirm · n/esc cancel",
         Mode::Edit => match app.tab {
@@ -773,6 +794,7 @@ const HELP_ROWS: &[(&str, &str)] = &[
     ("", ""),
     ("Read", ""),
     ("space p e", "done · prio · edit"),
+    ("C", "add comment (pick anchor, then type)"),
     ("y  Y  R", "copy id · copy body · raw"),
     ("ctrl+d/u", "scroll · esc back"),
     ("", ""),

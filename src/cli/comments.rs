@@ -44,7 +44,9 @@ pub(crate) fn run(args: &[String], store_root: Option<&Path>, out: &mut dyn Writ
     match sub {
         "add" => {
             if id.is_empty() {
-                return fail("usage: tally comments add <target> --body <text> [--section <heading>]");
+                return fail(
+                    "usage: tally comments add <target> --body <text> [--section <heading>]",
+                );
             }
             if body.is_empty() {
                 return fail("comment body is required (--body)");
@@ -104,7 +106,15 @@ mod tests {
 
         // proj.as_str() keeps every element &str — mixing &String with &str
         // literals fails to unify (no deref coercion through array LUB).
-        let add = ["add", "t_cli", "--project", proj.as_str(), "--body", "hello"].map(String::from);
+        let add = [
+            "add",
+            "t_cli",
+            "--project",
+            proj.as_str(),
+            "--body",
+            "hello",
+        ]
+        .map(String::from);
         let mut buf: Vec<u8> = Vec::new();
         assert_eq!(run(&add, Some(root.path()), &mut buf), 0);
         assert!(String::from_utf8_lossy(&buf).contains("hello"));

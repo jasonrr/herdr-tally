@@ -105,7 +105,11 @@ pub(crate) fn render_comments(out: &mut dyn Write, comments: &[Comment]) -> io::
         };
         // events read as log lines; notes read as authored comments
         if c.kind == "event" {
-            writeln!(out, "- ⋯ _{}_ — {}  \n  <sub>{}</sub>", c.text, c.author, c.created)?;
+            writeln!(
+                out,
+                "- ⋯ _{}_ — {}  \n  <sub>{}</sub>",
+                c.text, c.author, c.created
+            )?;
         } else {
             writeln!(
                 out,

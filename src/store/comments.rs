@@ -219,7 +219,9 @@ mod tests {
     #[test]
     fn test_pad_delete_cascades_only_on_success() {
         let tp = new_project();
-        let s = tp.create_scratchpad("plan", "# H1\nbody", Vec::new()).unwrap();
+        let s = tp
+            .create_scratchpad("plan", "# H1\nbody", Vec::new())
+            .unwrap();
         tp.add_comment(&s.id, "H1", "anchored").unwrap();
         // A wrong expected-revision must fail AND leave comments intact.
         assert!(tp.delete_scratchpad(&s.id, 999).is_err());
@@ -268,6 +270,10 @@ mod tests {
             ..TodoUpdate::default()
         };
         assert!(tp.update_todo(&t.id, stale).is_err());
-        assert_eq!(events(&tp).len(), before, "failed update must not log an event");
+        assert_eq!(
+            events(&tp).len(),
+            before,
+            "failed update must not log an event"
+        );
     }
 }
