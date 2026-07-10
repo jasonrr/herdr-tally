@@ -8,6 +8,8 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use edtui::actions::CopySelection;
+use edtui::clipboard::ClipboardTrait;
 use edtui::{EditorEventHandler, EditorMode, EditorState, Lines};
 use ratatui::text::Text;
 
@@ -124,6 +126,7 @@ fn new_editor(text: &str, single_line: bool) -> EditorState {
     let mut st = EditorState::new(Lines::from(text));
     st.mode = EditorMode::Insert; // emacs (modeless) bindings live in Insert
     st.set_single_line(single_line);
+    st.set_clipboard(PbcopyClipboard); // yank/paste through the system clipboard
     st
 }
 
@@ -143,6 +146,25 @@ fn clipboard_write(s: &str) -> std::io::Result<()> {
         return Err(std::io::Error::other("pbcopy failed"));
     }
     Ok(())
+}
+
+/// Backs edtui's yank/paste with the macOS system clipboard so a drag-selection
+/// copied out of the editor lands in pbcopy (edtui's default register is
+/// in-process only). get_text shells to pbpaste so edit-mode paste pulls the
+/// system clipboard too.
+struct PbcopyClipboard;
+impl ClipboardTrait for PbcopyClipboard {
+    fn set_text(&mut self, text: String) {
+        let _ = clipboard_write(&text); // ponytail: swallow pbcopy errors like yank() does
+    }
+    fn get_text(&mut self) -> String {
+        Command::new("pbpaste")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default()
+    }
 }
 
 impl App {
@@ -590,9 +612,15 @@ impl App {
                 _ => {}
             },
             MouseEventKind::Down(MouseButton::Left) => self.mouse_down(m),
-            MouseEventKind::Drag(MouseButton::Left) | MouseEventKind::Up(MouseButton::Left) => {
+            MouseEventKind::Drag(MouseButton::Left) => {
                 if self.mode == Mode::Edit {
                     self.forward_mouse(m);
+                }
+            }
+            MouseEventKind::Up(MouseButton::Left) => {
+                if self.mode == Mode::Edit {
+                    self.forward_mouse(m); // edtui finalizes the drag selection
+                    self.copy_selection(); // release copies it to pbcopy
                 }
             }
             _ => {}
@@ -688,6 +716,37 @@ impl App {
     fn forward_mouse(&mut self, m: MouseEvent) {
         self.title_handler.on_mouse_event(m, &mut self.title_ed);
         self.body_handler.on_mouse_event(m, &mut self.body_ed);
+    }
+
+    /// On drag-release in edit mode: copy a non-empty selection to the system
+    /// clipboard (CopySelection routes through PbcopyClipboard), then return
+    /// both editors to Insert mode. edtui's drag flips the editor into Visual,
+    /// where our emacs (Insert-mode) bindings don't fire — without this reset
+    /// every keypress after a click becomes a no-op. A zero-width selection (a
+    /// plain click, or a click with a sub-cell wobble) is dropped, not copied.
+    fn copy_selection(&mut self) {
+        let a = Self::take_selection(&mut self.body_ed);
+        let b = Self::take_selection(&mut self.title_ed);
+        if a || b {
+            self.status = "Copied selection".into();
+        }
+        self.body_ed.mode = EditorMode::Insert;
+        self.title_ed.mode = EditorMode::Insert;
+    }
+
+    /// Copies a non-empty selection to the clipboard (clearing it) and returns
+    /// whether it did. An empty selection is discarded silently.
+    fn take_selection(ed: &mut EditorState) -> bool {
+        match &ed.selection {
+            Some(s) if (s.start.row, s.start.col) != (s.end.row, s.end.col) => {
+                ed.execute(CopySelection);
+                true
+            }
+            _ => {
+                ed.selection = None;
+                false
+            }
+        }
     }
 
     fn scroll_read(&mut self, d: i32) {
@@ -1579,5 +1638,86 @@ mod tests {
             Some("line one\nline two")
         );
         assert_eq!(app.yank_id_target(), app.selected_id());
+    }
+
+    /// Pins the load-bearing assumption behind drag-to-copy: a clipboard set via
+    /// set_clipboard (as new_editor does with PbcopyClipboard) receives the
+    /// selected substring when CopySelection runs. If edtui ever stops routing
+    /// CopySelection through the custom clipboard, this fails instead of copy
+    /// silently going to the in-process register.
+    #[test]
+    fn copy_selection_routes_the_selection_through_the_set_clipboard() {
+        use edtui::actions::SelectLine;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        struct Capture(Rc<RefCell<String>>);
+        impl ClipboardTrait for Capture {
+            fn set_text(&mut self, text: String) {
+                *self.0.borrow_mut() = text;
+            }
+            fn get_text(&mut self) -> String {
+                self.0.borrow().clone()
+            }
+        }
+
+        let captured = Rc::new(RefCell::new(String::new()));
+        let mut st = EditorState::new(Lines::from("first line\nsecond line"));
+        st.set_clipboard(Capture(captured.clone()));
+        st.execute(SelectLine); // selects the cursor's line (row 0)
+        st.execute(CopySelection);
+        // SelectLine is line-mode so it prepends a newline; a real mouse drag is
+        // char-mode and won't. Assert on content, not that quirk: the point is
+        // the selection reached the clipboard we set, not the in-process one.
+        let got = captured.borrow();
+        assert!(got.contains("first line"), "got {got:?}");
+        assert!(!got.contains("second line"), "over-selected: {got:?}");
+    }
+
+    /// Regression: edtui's drag leaves the editor in Visual mode, where our
+    /// emacs Insert-mode bindings don't fire, so copy_selection must restore
+    /// Insert or typing goes dead after a click. And a zero-width selection (a
+    /// plain click) must not report "Copied selection".
+    #[test]
+    fn copy_selection_restores_insert_and_ignores_empty() {
+        use edtui::actions::SelectLine;
+        use std::cell::RefCell;
+        use std::rc::Rc;
+
+        struct Sink(Rc<RefCell<String>>);
+        impl ClipboardTrait for Sink {
+            fn set_text(&mut self, t: String) {
+                *self.0.borrow_mut() = t;
+            }
+            fn get_text(&mut self) -> String {
+                self.0.borrow().clone()
+            }
+        }
+
+        let mut f = Fixture::new(Tab::Todos);
+
+        // A real drag: Visual mode + a non-empty selection. Copy, restore Insert.
+        let sink = Rc::new(RefCell::new(String::new()));
+        f.app.body_ed = new_editor("first line\nsecond", false);
+        f.app.body_ed.set_clipboard(Sink(sink.clone())); // don't touch real pbcopy
+        f.app.body_ed.mode = EditorMode::Visual;
+        f.app.body_ed.execute(SelectLine);
+        f.app.copy_selection();
+        assert_eq!(
+            f.app.body_ed.mode,
+            EditorMode::Insert,
+            "typing must work again"
+        );
+        assert!(f.app.body_ed.selection.is_none(), "selection cleared");
+        assert_eq!(f.app.status, "Copied selection");
+        assert!(sink.borrow().contains("first line"));
+
+        // A plain click: no selection. No status, mode still restored to Insert.
+        f.app.status.clear();
+        f.app.body_ed = new_editor("x", false);
+        f.app.body_ed.mode = EditorMode::Visual; // as a click-drag would leave it
+        f.app.copy_selection();
+        assert_eq!(f.app.body_ed.mode, EditorMode::Insert);
+        assert_eq!(f.app.status, "", "empty selection must not report a copy");
     }
 }
