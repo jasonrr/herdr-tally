@@ -36,6 +36,13 @@ pub struct Scratchpad {
     pub created: String,
     #[serde(rename = "updated")]
     pub updated: String,
+    /// Attribution: who created / last mutated this. Empty on pads written
+    /// before attribution shipped — never backfilled, so render() omits the
+    /// line when empty (keeps old pads byte-identical on rewrite).
+    #[serde(rename = "created_by", default)]
+    pub created_by: String,
+    #[serde(rename = "updated_by", default)]
+    pub updated_by: String,
     #[serde(rename = "content")]
     pub content: String,
 }
@@ -94,6 +101,8 @@ fn parse_pad(b: &[u8]) -> Scratchpad {
             "status" => s.status = v.to_string(),
             "created" => s.created = v.to_string(),
             "updated" => s.updated = v.to_string(),
+            "created_by" => s.created_by = v.to_string(),
+            "updated_by" => s.updated_by = v.to_string(),
             "revision" => s.revision = v.parse().unwrap_or(0), // Go: Atoi error -> 0
             "tags" => s.tags = parse_tag_list(v),
             _ => {}
@@ -116,8 +125,17 @@ fn parse_tag_list(v: &str) -> Vec<String> {
 
 impl Scratchpad {
     fn render(&self) -> String {
+        // created_by/updated_by are omitted when empty so a pad written before
+        // attribution round-trips byte-for-byte (see the Go migration test).
+        let attr = |k: &str, v: &str| {
+            if v.is_empty() {
+                String::new()
+            } else {
+                format!("{k}: {v}\n")
+            }
+        };
         format!(
-            "---\nid: {}\ntitle: {}\ntags: [{}]\nstatus: {}\nrevision: {}\ncreated: {}\nupdated: {}\n---\n{}",
+            "---\nid: {}\ntitle: {}\ntags: [{}]\nstatus: {}\nrevision: {}\ncreated: {}\nupdated: {}\n{}{}---\n{}",
             self.id,
             self.title,
             self.tags.join(", "),
@@ -125,6 +143,8 @@ impl Scratchpad {
             self.revision,
             self.created,
             self.updated,
+            attr("created_by", &self.created_by),
+            attr("updated_by", &self.updated_by),
             self.content
         )
     }
@@ -239,6 +259,7 @@ impl Project {
             f(&mut s)?;
             s.revision += 1;
             s.updated = now();
+            s.updated_by = self.actor.clone();
             atomic_write(&path, s.render().as_bytes())?;
             Ok(s)
         })
@@ -263,6 +284,8 @@ impl Project {
             revision: 1,
             created: now(),
             updated: now(),
+            created_by: self.actor.clone(),
+            updated_by: self.actor.clone(),
             content: content.to_string(),
         };
         let path = self.pad_path(&s.id);
@@ -854,6 +877,42 @@ mod tests {
         assert_eq!(s.updated, "2026-01-02T03:04:06Z");
         assert_eq!(s.content, "# My Pad\n\nbody\n");
         assert_eq!(s.render(), go_pad, "render must round-trip Go's format");
+    }
+
+    #[test]
+    fn test_scratchpad_attribution_roundtrip() {
+        let mut tp = new_project();
+        tp.p.actor = "claude".to_string();
+        let s = tp
+            .create_scratchpad("x", "# x\nbody\n", Vec::new())
+            .unwrap();
+        assert_eq!(s.created_by, "claude");
+        assert_eq!(s.updated_by, "claude");
+        // Persisted to frontmatter and read back.
+        let (got, _) = tp.read_scratchpad(&s.id, "full", "", 0, 0).unwrap();
+        assert_eq!(got.created_by, "claude");
+        // A different actor's mutation stamps updated_by, leaves created_by.
+        tp.p.actor = "jason".to_string();
+        let up = tp
+            .append_scratchpad(&s.id, "more", s.revision, true)
+            .unwrap();
+        assert_eq!(up.created_by, "claude");
+        assert_eq!(up.updated_by, "jason");
+    }
+
+    // Omitempty: a pad with no actor renders WITHOUT the created_by/updated_by
+    // lines, so pads written before attribution round-trip byte-for-byte.
+    #[test]
+    fn test_render_omits_empty_attribution() {
+        let s = parse_pad(
+            b"---\nid: s_x\ntitle: x\ntags: []\nstatus: active\nrevision: 1\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n---\nbody",
+        );
+        assert_eq!(s.created_by, "");
+        let out = s.render();
+        assert!(
+            !out.contains("created_by") && !out.contains("updated_by"),
+            "empty attribution must not render lines: {out:?}"
+        );
     }
 
     // Go parsePad quirks: no frontmatter -> whole text is content with status

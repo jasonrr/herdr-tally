@@ -11,6 +11,20 @@ pub struct Project {
     pub path: PathBuf,
     pub name: String,
     pub dir: PathBuf,
+    /// Who is making changes, stamped into created_by/updated_by. Defaults to
+    /// $HERDR_NOTES_OWNER (the same identity the lock uses) or "agent"; the TUI
+    /// overrides it to "you" after resolve.
+    pub actor: String,
+}
+
+/// The default attribution identity: $HERDR_NOTES_OWNER, else "agent". Same
+/// resolution the lock owner uses (CLI owner_name / MCP or_agent), reused so
+/// "who edited" and "who locked" never disagree.
+fn default_actor() -> String {
+    match std::env::var("HERDR_NOTES_OWNER") {
+        Ok(a) if !a.is_empty() => a,
+        _ => "agent".to_string(),
+    }
 }
 
 fn store_root() -> PathBuf {
@@ -71,6 +85,7 @@ pub fn resolve_project_in(store_root: &Path, override_dir: Option<&str>) -> Resu
         path: abs,
         name,
         dir,
+        actor: default_actor(),
     };
     p.write_project_json();
     Ok(p)

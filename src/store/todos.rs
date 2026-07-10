@@ -54,6 +54,12 @@ pub struct Todo {
     pub updated: String,
     #[serde(rename = "completed")]
     pub completed: Option<String>,
+    /// Attribution: who created / last mutated this. Empty on todos written
+    /// before attribution shipped (serde default) — never backfilled.
+    #[serde(rename = "created_by", default)]
+    pub created_by: String,
+    #[serde(rename = "updated_by", default)]
+    pub updated_by: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -194,6 +200,8 @@ impl Project {
             created: now(),
             updated: now(),
             completed: None,
+            created_by: self.actor.clone(),
+            updated_by: self.actor.clone(),
         };
         let cp = td.clone();
         self.mutate_todos(|tf| {
@@ -330,6 +338,7 @@ impl Project {
             let t = tf.find_mut(id).ok_or(Error::NotFound)?;
             f(t)?;
             t.updated = now();
+            t.updated_by = self.actor.clone();
             out = Some(t.clone());
             Ok(())
         })?;
@@ -722,10 +731,30 @@ mod tests {
         assert_eq!(t2.lock.as_ref().map(|l| l.owner.as_str()), Some("claude"));
         assert_eq!(t2.completed.as_deref(), Some("2026-01-02T03:04:07Z"));
         assert_eq!(t2.blockers, vec!["t_go1"]);
+        // Attribution fields absent in the Go file default to empty (not backfilled).
+        assert_eq!(t1.created_by, "");
+        assert_eq!(t1.updated_by, "");
         // And a Rust-side mutation on top of the Go file must not lose data.
         let up = p.add_todo_tag("t_go2", "ported").unwrap();
         assert!(up.tags.contains(&"ported".to_string()));
         assert!(p.get_todo("t_go1").is_ok());
+    }
+
+    #[test]
+    fn test_todo_attribution_stamped() {
+        let mut tp = new_project();
+        tp.p.actor = "claude".to_string();
+        let td = tp.create_todo("x", "", "", Vec::new()).unwrap();
+        assert_eq!(td.created_by, "claude");
+        assert_eq!(td.updated_by, "claude");
+        // A different actor mutating stamps updated_by but leaves created_by.
+        tp.p.actor = "jason".to_string();
+        let up = tp.add_todo_tag(&td.id, "t").unwrap();
+        assert_eq!(up.created_by, "claude", "creator must not change on edit");
+        assert_eq!(
+            up.updated_by, "jason",
+            "editor should be the mutating actor"
+        );
     }
 
     #[test]

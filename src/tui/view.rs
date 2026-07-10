@@ -34,6 +34,26 @@ pub fn meta_line(status: &str, priority: &str) -> String {
     format!("○ {status}   ‖ {priority}")
 }
 
+/// Attribution suffix for the detail meta row: "   · by X, 2m ago", or
+/// "   · by X, edited by Y 2m ago" when the creator and last editor differ.
+/// Empty for items written before attribution shipped (no created/updated_by).
+pub fn attribution(created_by: &str, updated_by: &str, updated: &str, now: u64) -> String {
+    let creator = if created_by.is_empty() {
+        updated_by
+    } else {
+        created_by
+    };
+    if creator.is_empty() {
+        return String::new();
+    }
+    let rel = crate::tui::time::humanize_since(updated, now);
+    if !created_by.is_empty() && !updated_by.is_empty() && updated_by != created_by {
+        format!("   · by {created_by}, edited by {updated_by} {rel}")
+    } else {
+        format!("   · by {creator}, {rel}")
+    }
+}
+
 /// Segment boundaries within meta_line, as char columns relative to its start:
 /// (status_end, prio_start, prio_end). Derived from the same strings the row
 /// renders, so the click targets can't drift from the pixels.
@@ -377,14 +397,18 @@ fn draw_read(app: &mut App, f: &mut Frame, area: Rect) {
 
     let body_area = *parts.last().unwrap();
     if is_todo {
-        let meta = app
-            .todos
-            .iter()
-            .find(|t| t.id == app.read_id)
-            .map(|t| (t.status.clone(), t.priority.clone()));
-        if let Some((status, priority)) = meta {
+        let now = crate::tui::time::now_unix();
+        let meta = app.todos.iter().find(|t| t.id == app.read_id).map(|t| {
+            (
+                t.status.clone(),
+                t.priority.clone(),
+                attribution(&t.created_by, &t.updated_by, &t.updated, now),
+            )
+        });
+        if let Some((status, priority, attr)) = meta {
             let meta_area = parts[2];
-            f.render_widget(Line::from(meta_line(&status, &priority)).dim(), meta_area);
+            let row = format!("{}{attr}", meta_line(&status, &priority));
+            f.render_widget(Line::from(row).dim(), meta_area);
             app.hits.meta = Some(MetaHits::new(meta_area.x, meta_area.y, &status, &priority));
         }
     }
@@ -567,6 +591,29 @@ mod tests {
     use super::*;
     use crate::store::resolve_project_in;
     use crate::store::testutil::{TempDir, git_repo};
+
+    #[test]
+    fn attribution_cases() {
+        let now: u64 = 300; // 5m after the epoch below
+        let t = "1970-01-01T00:00:00Z";
+        // no attribution -> empty
+        assert_eq!(attribution("", "", t, now), "");
+        // creator == editor -> single "by X"
+        let one = attribution("claude", "claude", t, now);
+        assert!(
+            one.contains("by claude") && !one.contains("edited"),
+            "{one:?}"
+        );
+        // creator != editor -> both shown
+        let two = attribution("claude", "jason", t, now);
+        assert!(
+            two.contains("by claude") && two.contains("edited by jason"),
+            "{two:?}"
+        );
+        // only editor known (pre-attribution creator) -> single "by editor"
+        let e = attribution("", "jason", t, now);
+        assert!(e.contains("by jason") && !e.contains("edited"), "{e:?}");
+    }
 
     /// Filtering to a high-priority todo, opening it in read mode, then
     /// mutating the field the filter matched on (as `p`/`space` do) must not

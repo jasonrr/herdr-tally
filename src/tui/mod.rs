@@ -50,13 +50,16 @@ pub fn run(args: &[String]) -> ExitCode {
         }
     };
     let project = parsed.str("project", "");
-    let p = match resolve_project(project_opt(&project)) {
+    let mut p = match resolve_project(project_opt(&project)) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{e}");
             return ExitCode::from(1);
         }
     };
+    // The TUI is driven by you; attribute its writes to "you" rather than the
+    // agent/env default.
+    p.actor = "you".to_string();
 
     let mut a = App::new(p, initial);
     a.reload();
