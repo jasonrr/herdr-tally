@@ -1,5 +1,5 @@
-// Port of internal/mcp/tools.go — the 33 Solo-identical tools plus 3 comment_*
-// tools (36 total). Each tool is a
+// Port of internal/mcp/tools.go — the 33 Solo-identical tools plus 5 comment_*
+// tools (38 total). Each tool is a
 // declarative {name, description, inputSchema} plus a `run` fn that calls
 // exactly ONE store method, keeping the adapter mechanical (logic lives in
 // store). Tool names/descriptions/schemas are byte-parity with the Go registry
@@ -55,6 +55,9 @@ struct Args {
     pid: i64,
     // comments
     section: String,
+    since: String,
+    author: String,
+    include_events: bool,
 }
 
 impl Args {
@@ -300,6 +303,30 @@ fn registry() -> Vec<Tool> {
         Tool { name: "comment_delete", desc: "Delete a comment by its id.",
             schema: obj(req(&["id"]), json!({"id": prop("string", "comment id (c_…)")})),
             run: |p, a| { p.delete_comment(&a.id)?; Ok(Value::Null) } },
+        Tool { name: "comment_recent", desc: "List recent comments across all targets, newest first. since is a window like 30m/2h/1d (default 24h); author filters by author; include_events widens beyond notes to auto-logged events.",
+            schema: obj(Value::Null, json!({"since": prop("string", "window: 30m|2h|1d (default 24h)"), "author": prop("string", "filter by author; empty = all"), "include_events": prop("boolean", "include auto-logged events (default false)")})),
+            run: |p, a| {
+                let window = if a.since.is_empty() { "24h" } else { a.since.as_str() };
+                let cutoff = p.recency_cutoff(window);
+                let author = if a.author.is_empty() { None } else { Some(a.author.as_str()) };
+                val(p.recent_comments(&cutoff, author, a.include_events)?)
+            } },
+        Tool { name: "comment_targets", desc: "List every target that has comments, with note count, latest snippet, and resolved title. Newest-commented target first.",
+            schema: obj(Value::Null, json!({})),
+            run: |p, _a| {
+                let rows: Vec<Value> = p
+                    .comment_summaries()?
+                    .into_iter()
+                    .map(|s| json!({
+                        "target": s.target,
+                        "count": s.count,
+                        "latest": s.latest,
+                        "created": s.created,
+                        "title": p.resolve_target_label(&s.target),
+                    }))
+                    .collect();
+                Ok(Value::Array(rows))
+            } },
     ]
 }
 
@@ -442,8 +469,8 @@ mod tests {
         let n = defs.as_array().unwrap().len();
         assert!(n >= 30, "want the full tool set, got {n}");
         assert_eq!(
-            n, 36,
-            "expected exactly 36 tools (todo_* + scratchpad_* + comment_*), got {n}"
+            n, 38,
+            "expected exactly 38 tools (todo_* + scratchpad_* + comment_*), got {n}"
         );
     }
 
@@ -531,6 +558,37 @@ mod tests {
         assert_eq!(tags.len(), 2, "want tags [a b], got {tags:?}");
         assert_eq!(tags[0], "a");
         assert_eq!(tags[1], "b");
+    }
+
+    #[test]
+    fn test_dispatch_comment_recent() {
+        let e = Env::new();
+        e.call("comment_add", r#"{"id":"t_x","body":"one"}"#)
+            .unwrap();
+        e.call("comment_add", r#"{"id":"t_y","body":"two"}"#)
+            .unwrap();
+        // default window (24h) captures both fresh notes, newest-first
+        let r = e.call("comment_recent", "{}").unwrap();
+        let arr = r.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["text"].as_str(), Some("two"));
+        // author filter narrows to nothing for an unknown author
+        let r = e.call("comment_recent", r#"{"author":"nobody"}"#).unwrap();
+        assert_eq!(r.as_array().map(|a| a.len()), Some(0));
+    }
+
+    #[test]
+    fn test_dispatch_comment_targets() {
+        let e = Env::new();
+        e.call("comment_add", r#"{"id":"t_x","body":"a"}"#).unwrap();
+        e.call("comment_add", r#"{"id":"s_y","body":"b"}"#).unwrap();
+        let r = e.call("comment_targets", "{}").unwrap();
+        let arr = r.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        // each row carries target, count, and a resolved title (raw id here,
+        // since these targets don't exist as todos/pads)
+        assert!(arr.iter().all(|row| row.get("title").is_some()));
+        assert!(arr.iter().all(|row| row["count"].as_u64() == Some(1)));
     }
 
     // The todo_update empty-string-means-unchanged quirk (CLAUDE.md invariant).
