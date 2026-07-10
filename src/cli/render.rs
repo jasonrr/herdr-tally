@@ -136,11 +136,20 @@ pub(crate) fn render_recent_comments(
         } else {
             format!(" · {}", c.section)
         };
-        writeln!(
-            out,
-            "- {label} — **{}**{anchor}: {}  \n  <sub>{} · {}</sub>",
-            c.author, c.text, c.created, c.id
-        )?;
+        // events read as log lines; notes read as authored comments
+        if c.kind == "event" {
+            writeln!(
+                out,
+                "- {label} — ⋯ _{}_ — {}  \n  <sub>{}</sub>",
+                c.text, c.author, c.created
+            )?;
+        } else {
+            writeln!(
+                out,
+                "- {label} — **{}**{anchor}: {}  \n  <sub>{} · {}</sub>",
+                c.author, c.text, c.created, c.id
+            )?;
+        }
     }
     Ok(())
 }

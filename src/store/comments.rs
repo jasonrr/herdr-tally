@@ -507,4 +507,50 @@ mod tests {
         assert_eq!(tp.resolve_target_label("docs/plan.md"), "docs/plan.md");
         assert_eq!(tp.resolve_target_label("t_gone"), "t_gone"); // unresolvable
     }
+
+    #[test]
+    fn test_recent_comments_tie_break_is_deterministic() {
+        let tp = new_project();
+        // Two notes on one target, IDENTICAL created; file order = A then B.
+        let mut cf = tp.load_comments().unwrap();
+        for (id, text) in [("c_a", "first_appended"), ("c_b", "second_appended")] {
+            cf.comments.push(Comment {
+                id: id.into(),
+                target: "t_x".into(),
+                section: String::new(),
+                author: "x".into(),
+                created: "2026-07-10T12:00:00Z".into(),
+                kind: "note".into(),
+                text: text.into(),
+            });
+        }
+        tp.save_comments(&cf).unwrap();
+        // newest-first: the later-appended note wins the tie.
+        let r = tp.recent_comments("", None, false).unwrap();
+        assert_eq!(r[0].text, "second_appended");
+        assert_eq!(r[1].text, "first_appended");
+    }
+
+    #[test]
+    fn test_comment_summaries_tie_break_is_deterministic() {
+        let tp = new_project();
+        // Two targets, each one note, IDENTICAL created; t_a appended before t_b.
+        let mut cf = tp.load_comments().unwrap();
+        for (id, target) in [("c_a", "t_a"), ("c_b", "t_b")] {
+            cf.comments.push(Comment {
+                id: id.into(),
+                target: target.into(),
+                section: String::new(),
+                author: "x".into(),
+                created: "2026-07-10T12:00:00Z".into(),
+                kind: "note".into(),
+                text: "n".into(),
+            });
+        }
+        tp.save_comments(&cf).unwrap();
+        // newest-commented target first: later file index (t_b) wins the tie.
+        let sums = tp.comment_summaries().unwrap();
+        assert_eq!(sums[0].target, "t_b");
+        assert_eq!(sums[1].target, "t_a");
+    }
 }
