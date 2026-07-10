@@ -135,9 +135,14 @@ impl Project {
         author: Option<&str>,
         include_events: bool,
     ) -> Result<Vec<Comment>> {
+        // Reverse file order first (most-recently-appended first) so that when
+        // two comments land in the same second — `created` is second-precision —
+        // the stable sort below breaks the tie by append order instead of
+        // silently falling back to oldest-first.
         let mut v: Vec<Comment> = self
             .all_comments()?
             .into_iter()
+            .rev()
             .filter(|c| c.created.as_str() >= cutoff)
             .filter(|c| include_events || c.kind == "note")
             .filter(|c| author.is_none_or(|a| c.author == a))
