@@ -87,6 +87,12 @@ pub struct App {
     /// Cached render of read_body (markdown or raw), rebuilt on body change.
     pub read_text: Text<'static>,
     pub read_scroll: u16,
+    /// Bumped whenever read_text changes; keys the pre-wrapped draw cache.
+    pub read_gen: u64,
+    /// Pre-wrapped read body as (gen, width, buffer). Blitting the visible slice
+    /// avoids ratatui re-wrapping the whole doc every frame (was O(scroll depth)
+    /// per repaint — stop-motion scrolling near the bottom of large docs).
+    pub read_cache: Option<(u64, u16, ratatui::buffer::Buffer)>,
 
     // edit mode
     pub title_ed: EditorState,
@@ -189,6 +195,8 @@ impl App {
             read_body: String::new(),
             read_text: Text::default(),
             read_scroll: 0,
+            read_gen: 0,
+            read_cache: None,
             title_ed: new_editor("", true),
             body_ed: new_editor("", false),
             title_handler: EditorEventHandler::emacs_mode(),
@@ -880,6 +888,7 @@ impl App {
         } else {
             markdown::render(&self.read_body)
         };
+        self.read_gen = self.read_gen.wrapping_add(1);
     }
 
     /// Opens the unified title+body editor on the selected item.

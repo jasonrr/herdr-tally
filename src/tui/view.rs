@@ -8,7 +8,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Padding, Paragraph, Wrap};
+use ratatui::widgets::{Block, Clear, Padding, Paragraph, Widget, Wrap};
 
 use super::app::{App, Focus, Mode, Tab};
 
@@ -413,12 +413,41 @@ fn draw_read(app: &mut App, f: &mut Frame, area: Rect) {
         }
     }
 
-    let body = Paragraph::new(app.read_text.clone()).wrap(Wrap { trim: false });
-    let total = body.line_count(body_area.width) as u16;
+    // Pre-wrap the whole doc into an off-screen buffer once (per gen+width), then
+    // blit only the visible rows. ratatui's Paragraph re-wraps every line above
+    // the scroll offset on each repaint, so scrolling a large doc near the bottom
+    // was O(scroll depth) per frame — the stop-motion symptom.
+    let w = body_area.width;
+    let stale = !matches!(&app.read_cache, Some((g, cw, _)) if *g == app.read_gen && *cw == w);
+    if stale && w > 0 {
+        let body = Paragraph::new(app.read_text.clone()).wrap(Wrap { trim: false });
+        let total = (body.line_count(w) as u16).max(1);
+        let mut buf = ratatui::buffer::Buffer::empty(Rect::new(0, 0, w, total));
+        body.render(*buf.area(), &mut buf);
+        app.read_cache = Some((app.read_gen, w, buf));
+    }
+    app.hits.body_h = body_area.height;
+    let Some((_, _, cache)) = &app.read_cache else {
+        return;
+    };
+    let total = cache.area().height;
     let max_scroll = total.saturating_sub(body_area.height);
     app.read_scroll = app.read_scroll.min(max_scroll);
-    app.hits.body_h = body_area.height;
-    f.render_widget(body.scroll((app.read_scroll, 0)), body_area);
+    let dst = f.buffer_mut();
+    for row in 0..body_area.height {
+        let src_y = app.read_scroll + row;
+        if src_y >= total {
+            break;
+        }
+        for col in 0..w {
+            if let (Some(src), Some(dst)) = (
+                cache.cell((col, src_y)),
+                dst.cell_mut((body_area.x + col, body_area.y + row)),
+            ) {
+                *dst = src.clone();
+            }
+        }
+    }
 }
 
 fn card_theme(title: &'static str, focused: bool) -> EditorTheme<'static> {
@@ -662,6 +691,50 @@ mod tests {
 
     /// The help overlay's centering math must clamp to the pane, not panic,
     /// even when the pane is smaller than the popup it wants to draw.
+    /// The read-mode viewport is a blit of a pre-wrapped cache slice; scrolling
+    /// must move which document rows land on screen (and not panic on geometry).
+    #[test]
+    fn read_scroll_blits_the_right_slice() {
+        let root = TempDir::new();
+        let repo = git_repo();
+        let p = resolve_project_in(root.path(), Some(&repo.path().to_string_lossy())).unwrap();
+        let mut app = App::new(p, Tab::Todos);
+        let body = (0..200)
+            .map(|i| format!("L{i:03}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        app.p.create_todo("Doc", &body, "high", vec![]).unwrap();
+        app.reload();
+        app.enter_read();
+        app.raw = true; // plain lines, no markdown wrapping surprises
+        app.rebuild_read_text();
+
+        let dump = |app: &mut App| {
+            let backend = ratatui::backend::TestBackend::new(40, 12);
+            let mut term = ratatui::Terminal::new(backend).unwrap();
+            term.draw(|f| draw(app, f)).unwrap();
+            let buf = term.backend().buffer().clone();
+            let mut s = String::new();
+            for y in 0..buf.area().height {
+                for x in 0..buf.area().width {
+                    s.push_str(buf.cell((x, y)).unwrap().symbol());
+                }
+                s.push('\n');
+            }
+            s
+        };
+
+        app.read_scroll = 0;
+        let top = dump(&mut app);
+        assert!(top.contains("L000"), "top of doc visible at scroll 0");
+        assert!(!top.contains("L100"), "far rows not visible at scroll 0");
+
+        app.read_scroll = 100;
+        let deep = dump(&mut app);
+        assert!(deep.contains("L100"), "scroll moves the viewport down");
+        assert!(!deep.contains("L000"), "top rows gone once scrolled down");
+    }
+
     #[test]
     fn help_overlay_renders_at_any_size() {
         let root = TempDir::new();

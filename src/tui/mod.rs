@@ -97,11 +97,21 @@ fn event_loop(terminal: &mut ratatui::DefaultTerminal, a: &mut App) -> std::io::
         terminal.draw(|f| view::draw(a, f))?;
         let timeout = POLL.saturating_sub(last_load.elapsed());
         if event::poll(timeout)? {
-            match event::read()? {
-                Event::Key(k) if k.kind != KeyEventKind::Release => a.on_key(k),
-                Event::Mouse(m) => a.on_mouse(m),
-                Event::Paste(s) => a.on_paste(s),
-                _ => {} // Resize redraws on the next loop pass
+            // Coalesce: drain every input already buffered before redrawing, so a
+            // burst of mouse-wheel ticks (which arrive far faster than a herdr
+            // pane can flush a full-viewport repaint) collapses into ONE flush
+            // instead of one stop-motion frame per tick. One event still behaves
+            // exactly as before.
+            loop {
+                match event::read()? {
+                    Event::Key(k) if k.kind != KeyEventKind::Release => a.on_key(k),
+                    Event::Mouse(m) => a.on_mouse(m),
+                    Event::Paste(s) => a.on_paste(s),
+                    _ => {} // Resize redraws on the next loop pass
+                }
+                if a.quit || !event::poll(Duration::ZERO)? {
+                    break;
+                }
             }
         }
         if last_load.elapsed() >= POLL {
