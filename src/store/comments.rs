@@ -228,4 +228,46 @@ mod tests {
         tp.delete_scratchpad(&s.id, s.revision).unwrap();
         assert!(tp.list_comments(&s.id).unwrap().is_empty());
     }
+
+    #[test]
+    fn test_status_transitions_log_events() {
+        use crate::store::TodoUpdate;
+        use crate::store::testutil::TestProject;
+        let tp = new_project();
+        let t = tp.create_todo("x", "", "", Vec::new()).unwrap();
+        let events = |tp: &TestProject| -> Vec<String> {
+            tp.list_comments(&t.id)
+                .unwrap()
+                .into_iter()
+                .filter(|c| c.kind == "event")
+                .map(|c| c.text)
+                .collect()
+        };
+        // create is not a transition
+        assert!(events(&tp).is_empty());
+        // a tag edit changes nothing about status → no event
+        tp.add_todo_tag(&t.id, "a").unwrap();
+        assert!(events(&tp).is_empty());
+        // status change → one event mentioning the new status
+        let u = TodoUpdate {
+            status: Some("in progress".to_string()),
+            ..TodoUpdate::default()
+        };
+        tp.update_todo(&t.id, u).unwrap();
+        let e = events(&tp);
+        assert_eq!(e.len(), 1);
+        assert!(e[0].contains("in progress"), "got {:?}", e);
+        // completion → "marked done"
+        tp.complete_todo(&t.id, false).unwrap();
+        assert!(events(&tp).iter().any(|x| x == "marked done"));
+        // a FAILED update (stale expected_updated → ConcurrentEdit) emits nothing
+        let before = events(&tp).len();
+        let stale = TodoUpdate {
+            status: Some("open".to_string()),
+            expected_updated: Some("1999-01-01T00:00:00Z".to_string()),
+            ..TodoUpdate::default()
+        };
+        assert!(tp.update_todo(&t.id, stale).is_err());
+        assert_eq!(events(&tp).len(), before, "failed update must not log an event");
+    }
 }

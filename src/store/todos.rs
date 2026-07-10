@@ -337,14 +337,31 @@ impl Project {
     /// Go's editTodo: find, apply f, stamp Updated, return the changed todo.
     fn edit_todo_raw(&self, id: &str, f: impl FnOnce(&mut Todo) -> Result<()>) -> Result<Todo> {
         let mut out = None;
+        let mut transition: Option<(String, String)> = None;
         self.mutate_todos(|tf| {
             let t = tf.find_mut(id).ok_or(Error::NotFound)?;
+            let before = t.status.clone();
             f(t)?;
             t.updated = now();
             t.updated_by = self.actor.clone();
+            if t.status != before {
+                transition = Some((before, t.status.clone()));
+            }
             out = Some(t.clone());
             Ok(())
         })?;
+        if let Some((from, to)) = transition {
+            let text = if to == "completed" {
+                "marked done".to_string()
+            } else if from == "completed" {
+                format!("reopened ({from} → {to})")
+            } else {
+                format!("status: {from} → {to}")
+            };
+            // Best-effort: the status change already committed; a failed event
+            // write must not turn a successful mutation into an error.
+            let _ = self.add_comment_event(id, &text);
+        }
         out.ok_or(Error::NotFound) // unreachable: mutate succeeded => out is set
     }
 
