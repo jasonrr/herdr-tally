@@ -202,13 +202,14 @@ impl Project {
 /// N{s,m,h,d} -> seconds. None on any other shape.
 fn parse_window(w: &str) -> Option<u64> {
     let w = w.trim();
-    let (num, unit) = w.split_at(w.len().checked_sub(1)?);
+    let unit = w.chars().last()?;
+    let num = &w[..w.len() - unit.len_utf8()];
     let n: u64 = num.parse().ok()?;
     let mult = match unit {
-        "s" => 1,
-        "m" => 60,
-        "h" => 3_600,
-        "d" => 86_400,
+        's' => 1,
+        'm' => 60,
+        'h' => 3_600,
+        'd' => 86_400,
         _ => return None,
     };
     n.checked_mul(mult)
@@ -347,6 +348,8 @@ mod tests {
         assert_eq!(duration_cutoff(now, "xyz"), "");
         assert_eq!(duration_cutoff(now, ""), "");
         assert_eq!(duration_cutoff(now, "2"), "");
+        assert_eq!(duration_cutoff(now, "5µ"), "");
+        assert_eq!(duration_cutoff(now, "€"), "");
     }
 
     #[test]
