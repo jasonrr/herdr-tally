@@ -120,7 +120,7 @@ pub(crate) fn now() -> String {
     format_rfc3339(secs)
 }
 
-fn format_rfc3339(secs: u64) -> String {
+pub(crate) fn format_rfc3339(secs: u64) -> String {
     let (y, m, d) = civil_from_days((secs / 86_400) as i64);
     let rem = secs % 86_400;
     format!(
@@ -143,6 +143,31 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
     let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32; // [1, 12]
     (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+// Inverse of civil_from_days: (y, m, d) -> days since 1970-01-01.
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400; // [0, 399]
+    let mp = if m > 2 { m - 3 } else { m + 9 } as i64; // [0, 11]
+    let doy = (153 * mp + 2) / 5 + d as i64 - 1; // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
+    era * 146_097 + doe - 719_468
+}
+
+/// Parse the fixed-width "YYYY-MM-DDTHH:MM:SSZ" that now() emits back to unix
+/// seconds. None for any other shape (callers degrade to "all time").
+pub(crate) fn epoch_from_rfc3339(s: &str) -> Option<u64> {
+    let b = s.as_bytes();
+    if b.len() != 20 || b[4] != b'-' || b[7] != b'-' || b[10] != b'T' || b[19] != b'Z' {
+        return None;
+    }
+    let n = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
+    let (y, mo, d) = (n(0..4)?, n(5..7)? as u32, n(8..10)? as u32);
+    let (h, mi, se) = (n(11..13)?, n(14..16)?, n(17..19)?);
+    let secs = days_from_civil(y, mo, d) * 86_400 + h * 3_600 + mi * 60 + se;
+    u64::try_from(secs).ok()
 }
 
 impl TodosFile {
@@ -782,5 +807,19 @@ mod tests {
         assert_eq!(format_rfc3339(0), "1970-01-01T00:00:00Z");
         assert_eq!(format_rfc3339(951_782_400), "2000-02-29T00:00:00Z"); // leap day
         assert_eq!(format_rfc3339(1_700_000_000), "2023-11-14T22:13:20Z");
+    }
+
+    #[test]
+    fn test_rfc3339_epoch_roundtrip() {
+        // Known value: 2026-07-10T12:00:00Z
+        let e = epoch_from_rfc3339("2026-07-10T12:00:00Z").unwrap();
+        assert_eq!(format_rfc3339(e), "2026-07-10T12:00:00Z");
+        // now() round-trips through the epoch parser
+        let n = now();
+        assert_eq!(format_rfc3339(epoch_from_rfc3339(&n).unwrap()), n);
+        // malformed inputs are rejected, not panicked on
+        assert_eq!(epoch_from_rfc3339("2026-07-10"), None);
+        assert_eq!(epoch_from_rfc3339(""), None);
+        assert_eq!(epoch_from_rfc3339("2026-07-10T12:00:00+00:00"), None);
     }
 }
