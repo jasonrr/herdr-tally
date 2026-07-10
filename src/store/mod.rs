@@ -1,5 +1,6 @@
 // Store: single source of truth, same rule as the Go original. CLI/MCP/TUI
 // stay thin adapters over this module.
+mod comments;
 mod errors;
 mod ids;
 mod lock;
@@ -10,6 +11,7 @@ mod todos;
 #[cfg(test)]
 pub(crate) mod testutil;
 
+pub use comments::Comment;
 pub use errors::{Error, Result};
 pub use project::{Project, resolve_project, resolve_project_in};
 pub use scratchpads::{EditTarget, Scratchpad};
