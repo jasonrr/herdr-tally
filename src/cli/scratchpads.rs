@@ -163,6 +163,15 @@ pub(crate) fn run(args: &[String], store_root: Option<&Path>, out: &mut dyn Writ
                     );
                 } else {
                     let _ = writeln!(out, "{text}");
+                    // Only the human-facing full read gets the comments block;
+                    // content/section/headings modes stay raw for machine callers.
+                    if mode == "full"
+                        && let Ok(cs) = proj.list_comments(&id)
+                        && !cs.is_empty()
+                    {
+                        let _ = writeln!(out, "\n---\n## Comments\n");
+                        let _ = render::render_comments(out, &cs);
+                    }
                 }
             }
             Err(e) => return fail(&e.to_string()),

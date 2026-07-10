@@ -11,6 +11,7 @@ use serde::Serialize;
 
 use crate::store::{Project, resolve_project, resolve_project_in};
 
+mod comments;
 mod render;
 mod scratchpads;
 mod todos;
@@ -23,6 +24,11 @@ pub fn todos(args: &[String]) -> ExitCode {
 /// `tally scratchpads …` entry: real store root, stdout.
 pub fn scratchpads(args: &[String]) -> ExitCode {
     exit(scratchpads::run(args, None, &mut io::stdout()))
+}
+
+/// `tally comments …` entry: real store root, stdout.
+pub fn comments(args: &[String]) -> ExitCode {
+    exit(comments::run(args, None, &mut io::stdout()))
 }
 
 /// Only main turns a code into a process exit — the run functions return codes
