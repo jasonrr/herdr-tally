@@ -20,10 +20,8 @@ impl TempDir {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let p = std::env::temp_dir().join(format!(
-            "tally-rs-test-{}-{nanos}-{n}",
-            std::process::id()
-        ));
+        let p =
+            std::env::temp_dir().join(format!("tally-rs-test-{}-{nanos}-{n}", std::process::id()));
         std::fs::create_dir_all(&p).unwrap();
         TempDir(p)
     }

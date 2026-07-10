@@ -8,7 +8,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph, Wrap};
+use ratatui::widgets::{Block, Clear, Padding, Paragraph, Wrap};
 
 use super::app::{App, Focus, Mode, Tab};
 
@@ -143,6 +143,10 @@ pub fn draw(app: &mut App, f: &mut Frame) {
     match app.mode {
         Mode::Read => draw_read(app, f, content),
         Mode::Edit | Mode::DiscardConfirm => draw_edit(app, f, content),
+        Mode::Help => {
+            draw_list(app, f, content); // list stays visible behind the overlay
+            draw_help(f, content);
+        }
         _ => draw_list(app, f, content), // List, Confirm, Filter
     }
     draw_footer(app, f, footer_area);
@@ -473,15 +477,11 @@ fn draw_footer(app: &App, f: &mut Frame, area: Rect) {
 
 fn footer(app: &App) -> &'static str {
     match app.mode {
+        // Top ~6 commands only; `?` opens the full list (draw_help).
         Mode::List => match app.tab {
-            Tab::Todos if app.hide_completed => {
-                "↑↓ · enter read · n new · space done · e edit · p prio · c show done · d del · q"
-            }
-            Tab::Todos => {
-                "↑↓ · enter · n new · space done · e edit · p prio · c hide done · d del · q"
-            }
-            Tab::Scratchpads => "↑↓ move · enter read · n new · e edit · d del · 1·2·3 · r · q",
-            Tab::Plans => "↑↓ move · enter read · / filter · 1·2·3 · r · q",
+            Tab::Todos => "↑↓ · enter · n new · space done · e edit · d del · ? help",
+            Tab::Scratchpads => "↑↓ · enter · n new · e edit · d del · ? help",
+            Tab::Plans => "↑↓ · enter · / filter · r · ? help",
         },
         Mode::Read => match app.tab {
             Tab::Todos => "space done · p prio · e edit · y id · Y copy · R raw · esc back",
@@ -495,7 +495,71 @@ fn footer(app: &App) -> &'static str {
         },
         Mode::DiscardConfirm => "y discard · n/esc keep editing",
         Mode::Filter => "type to filter · enter apply · esc clear",
+        Mode::Help => "esc · q · ? — close",
     }
+}
+
+/// Full keyboard reference, one (keys, action) pair per row. Grouped by the
+/// mode the keys apply in. Kept in sync with the footer/key handlers by hand.
+const HELP_ROWS: &[(&str, &str)] = &[
+    ("List", ""),
+    ("↑↓ j k", "move"),
+    ("enter o", "open / read"),
+    ("n", "new"),
+    ("e", "edit"),
+    ("space", "toggle done (todos)"),
+    ("p", "cycle priority (todos)"),
+    ("c", "hide / show done (todos)"),
+    ("d", "delete"),
+    ("/", "filter (plans)"),
+    ("1 2 3", "switch tab"),
+    ("r", "reload"),
+    ("q  ctrl+c", "quit"),
+    ("", ""),
+    ("Read", ""),
+    ("space p e", "done · prio · edit"),
+    ("y  Y  R", "copy id · copy body · raw"),
+    ("ctrl+d/u", "scroll · esc back"),
+    ("", ""),
+    ("Edit", ""),
+    ("tab", "switch title / body"),
+    ("ctrl+d / ctrl+enter", "save"),
+    ("esc", "discard"),
+    ("ctrl+p  ctrl+t", "priority · done (todos)"),
+];
+
+/// Floating shortcuts overlay. Centered over `area`; if the pane is too small
+/// for the box it fills `area` instead so nothing clips out of view.
+fn draw_help(f: &mut Frame, area: Rect) {
+    let key_w = HELP_ROWS
+        .iter()
+        .map(|(k, _)| k.chars().count())
+        .max()
+        .unwrap_or(0) as u16;
+    let lines: Vec<Line> = HELP_ROWS
+        .iter()
+        .map(|(k, v)| {
+            if v.is_empty() {
+                // section header (or blank spacer) — bold, no padding column
+                Line::from(Span::from(*k).bold())
+            } else {
+                Line::from(format!("{k:key_w$}  {v}", key_w = key_w as usize))
+            }
+        })
+        .collect();
+
+    let content_w = lines.iter().map(|l| l.width()).max().unwrap_or(0) as u16;
+    let want_w = (content_w + 4).min(area.width); // +2 border +2 padding
+    let want_h = (lines.len() as u16 + 2).min(area.height); // +2 border
+    let x = area.x + (area.width.saturating_sub(want_w)) / 2;
+    let y = area.y + (area.height.saturating_sub(want_h)) / 2;
+    let popup = Rect::new(x, y, want_w, want_h);
+
+    f.render_widget(Clear, popup);
+    let block = Block::bordered()
+        .title(" Shortcuts ")
+        .padding(Padding::horizontal(1));
+    f.render_widget(Paragraph::new(lines).block(block), popup);
 }
 
 #[cfg(test)]
@@ -547,6 +611,24 @@ mod tests {
             Some("Ship it".to_string()),
             "read view must stay resolved by read_id, not the filtered cursor"
         );
+    }
+
+    /// The help overlay's centering math must clamp to the pane, not panic,
+    /// even when the pane is smaller than the popup it wants to draw.
+    #[test]
+    fn help_overlay_renders_at_any_size() {
+        let root = TempDir::new();
+        let repo = git_repo();
+        let p = resolve_project_in(root.path(), Some(&repo.path().to_string_lossy())).unwrap();
+        let mut app = App::new(p, Tab::Todos);
+        app.p.create_todo("A todo", "", "high", vec![]).unwrap();
+        app.reload();
+        app.mode = Mode::Help;
+        for (w, h) in [(8u16, 4u16), (80, 30)] {
+            let backend = ratatui::backend::TestBackend::new(w, h);
+            let mut term = ratatui::Terminal::new(backend).unwrap();
+            term.draw(|f| draw(&mut app, f)).unwrap(); // panics on bad geometry
+        }
     }
 
     /// The rendered tab bar as a plain string, built the same way

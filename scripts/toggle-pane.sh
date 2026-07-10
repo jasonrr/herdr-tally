@@ -7,7 +7,7 @@
 # per-pane command/args field for a plugin-launched pane (grepping for "pane.sh
 # $kind" would never match; that string is not present in the JSON at all). What
 # IS present is `.label`, which herdr copies from the manifest's [[panes]] `title`
-# ("Todos" / "Scratchpads") onto the pane the moment it's opened via
+# ("Tally" / "Scratchpads") onto the pane the moment it's opened via
 # `plugin pane open`. So we match on label, scoped to this workspace via
 # $HERDR_WORKSPACE_ID (herdr sets this for every pane it spawns).
 set -euo pipefail
@@ -16,7 +16,7 @@ kind="${1:?todos|scratchpads}"
 herdr="${HERDR_BIN_PATH:-/opt/homebrew/bin/herdr}"
 
 case "$kind" in
-  todos) title="Todos" ;;
+  todos) title="Tally" ;;
   scratchpads) title="Scratchpads" ;;
   *) echo "usage: toggle-pane.sh todos|scratchpads" >&2; exit 2 ;;
 esac

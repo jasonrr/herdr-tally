@@ -17,7 +17,7 @@ command = ["/bin/sh", "-c", "export PATH=\"$HOME/.cargo/bin:/opt/homebrew/bin:$P
 # every plugin command) instead of a bare relative path.
 [[panes]]
 id = "todos"
-title = "Todos"
+title = "Tally"
 placement = "split"
 command = ["bash", "-c", 'export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"; exec "$HERDR_PLUGIN_ROOT/bin/tally" tui todos']
 

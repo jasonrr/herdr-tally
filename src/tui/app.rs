@@ -42,6 +42,8 @@ pub enum Mode {
     Edit,
     DiscardConfirm,
     Filter,
+    /// Shortcuts overlay, drawn over the list; any dismiss key restores List.
+    Help,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -145,7 +147,7 @@ fn clipboard_write(s: &str) -> std::io::Result<()> {
 
 impl App {
     pub fn new(p: Project, initial: Tab) -> App {
-        App {
+        let mut app = App {
             p,
             tab: initial,
             mode: Mode::List,
@@ -178,6 +180,28 @@ impl App {
             edit_rev: 0,
             edit_return: Mode::List,
             hits: Hits::default(),
+        };
+        app.load_ui_state();
+        app
+    }
+
+    /// Restore persisted TUI prefs (best-effort; missing/garbage file = defaults).
+    fn load_ui_state(&mut self) {
+        if let Ok(s) = std::fs::read_to_string(self.p.ui_state_path())
+            && let Ok(v) = serde_json::from_str::<serde_json::Value>(&s)
+        {
+            self.hide_completed = v
+                .get("hide_completed")
+                .and_then(|b| b.as_bool())
+                .unwrap_or(false);
+        }
+    }
+
+    /// Persist TUI prefs. Errors ignored — a lost pref is not worth a failure.
+    fn save_ui_state(&self) {
+        let v = serde_json::json!({ "hide_completed": self.hide_completed });
+        if let Ok(s) = serde_json::to_string(&v) {
+            let _ = std::fs::write(self.p.ui_state_path(), s);
         }
     }
 
@@ -335,6 +359,18 @@ impl App {
             Mode::Edit => self.key_edit(k),
             Mode::DiscardConfirm => self.key_discard_confirm(k),
             Mode::Filter => self.key_filter(k),
+            Mode::Help => self.key_help(k),
+        }
+    }
+
+    /// Any of esc/q/? dismisses the shortcuts overlay; everything else is
+    /// swallowed so a stray key can't act on the list behind it.
+    fn key_help(&mut self, k: KeyEvent) {
+        if matches!(
+            k.code,
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?')
+        ) {
+            self.mode = Mode::List;
         }
     }
 
@@ -345,6 +381,7 @@ impl App {
             KeyCode::Char('q') | KeyCode::Esc => self.quit = true,
             KeyCode::Char('c') if self.tab == Tab::Todos => {
                 self.hide_completed = !self.hide_completed;
+                self.save_ui_state();
                 self.reload();
             }
             KeyCode::Char('1') => self.switch_tab(Tab::Todos),
@@ -353,6 +390,7 @@ impl App {
             KeyCode::Char('j') | KeyCode::Down => self.move_cursor(1),
             KeyCode::Char('k') | KeyCode::Up => self.move_cursor(-1),
             KeyCode::Char('/') => self.mode = Mode::Filter,
+            KeyCode::Char('?') => self.mode = Mode::Help,
             KeyCode::Char('r') => self.reload(),
             KeyCode::Char(' ') if self.tab == Tab::Todos => {
                 self.toggle_status();
@@ -436,6 +474,12 @@ impl App {
                 return;
             }
             KeyCode::Char('d') if ctrl => {
+                self.save_edit();
+                return;
+            }
+            // Ctrl+Enter saves too, on terminals that report the modifier (Kitty
+            // protocol pushed in tui::mod). Plain Enter still edits the buffer.
+            KeyCode::Enter if ctrl => {
                 self.save_edit();
                 return;
             }
@@ -529,6 +573,9 @@ impl App {
     // ---- mouse ----
 
     pub fn on_mouse(&mut self, m: MouseEvent) {
+        if self.mode == Mode::Help {
+            return; // overlay swallows mouse; dismiss with a key
+        }
         match m.kind {
             MouseEventKind::ScrollDown => match self.mode {
                 Mode::List | Mode::Filter => self.move_cursor(1),
@@ -1493,6 +1540,32 @@ mod tests {
         assert_eq!(f.app.todos[0].title, "open");
         f.app.on_key(key(KeyCode::Char('c'))); // show again
         assert_eq!(f.app.todos.len(), 2, "completed restored");
+    }
+
+    #[test]
+    fn question_mark_toggles_help_overlay() {
+        let mut f = Fixture::new(Tab::Todos);
+        f.app.on_key(key(KeyCode::Char('?')));
+        assert_eq!(f.app.mode, Mode::Help);
+        // a stray key is swallowed, not acted on the list behind it
+        f.app.on_key(key(KeyCode::Char('n')));
+        assert_eq!(f.app.mode, Mode::Help, "non-dismiss key ignored");
+        f.app.on_key(key(KeyCode::Esc));
+        assert_eq!(f.app.mode, Mode::List, "esc closes help");
+    }
+
+    #[test]
+    fn hide_completed_persists_across_launches() {
+        let f = Fixture::new(Tab::Todos);
+        {
+            let mut app = App::new(f.store(), Tab::Todos);
+            assert!(!app.hide_completed, "defaults to showing completed");
+            app.on_key(key(KeyCode::Char('c'))); // hide + persist
+            assert!(app.hide_completed);
+        }
+        // A fresh App over the same store restores the toggle.
+        let relaunched = App::new(f.store(), Tab::Todos);
+        assert!(relaunched.hide_completed, "toggle survived relaunch");
     }
 
     #[test]

@@ -113,6 +113,12 @@ impl Project {
         self.dir.join("scratchpads")
     }
 
+    /// Per-project TUI preferences (hide-completed, later per-tab filters).
+    /// TUI-only state, so it lives outside the todo/scratchpad domain files.
+    pub(crate) fn ui_state_path(&self) -> PathBuf {
+        self.dir.join("ui.json")
+    }
+
     /// Port of writeProjectJSON: a best-effort breadcrumb written once on
     /// first resolve; errors deliberately ignored (Go discarded them too).
     fn write_project_json(&self) {

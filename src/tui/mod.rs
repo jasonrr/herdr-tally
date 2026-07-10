@@ -14,9 +14,11 @@ use std::time::{Duration, Instant};
 
 use crossterm::event::{
     self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event, KeyEventKind,
+    Event, KeyEventKind, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::execute;
+use crossterm::terminal::supports_keyboard_enhancement;
 
 use crate::cli::{parse, project_opt};
 use crate::store::resolve_project;
@@ -60,7 +62,21 @@ pub fn run(args: &[String]) -> ExitCode {
     a.reload();
     let mut terminal = ratatui::init(); // altscreen + raw mode + panic hook
     let _ = execute!(stdout(), EnableMouseCapture, EnableBracketedPaste);
+    // Kitty protocol lets us tell Ctrl+Enter apart from plain Enter (the save
+    // alias). Only push where the terminal supports it; on the rest Ctrl+D
+    // stays the universal save key. Track whether we pushed so we don't pop a
+    // flag we never set.
+    let enhanced = supports_keyboard_enhancement().unwrap_or(false);
+    if enhanced {
+        let _ = execute!(
+            stdout(),
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        );
+    }
     let res = event_loop(&mut terminal, &mut a);
+    if enhanced {
+        let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
+    }
     let _ = execute!(stdout(), DisableBracketedPaste, DisableMouseCapture);
     ratatui::restore();
     match res {
