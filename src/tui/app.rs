@@ -46,6 +46,9 @@ pub enum Mode {
     Filter,
     /// Shortcuts overlay, drawn over the list; any dismiss key restores List.
     Help,
+    /// Two-step add-comment: pick an anchor, then type the note.
+    CommentAnchor,
+    CommentInput,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -116,6 +119,16 @@ pub struct App {
     pub edit_rev: i64,
     /// Mode to return to on save/cancel (List or Read).
     pub edit_return: Mode,
+
+    // add-comment flow
+    /// Headings offered by the anchor picker (index 0 is the implicit whole-item).
+    pub comment_headings: Vec<String>,
+    pub comment_anchor_sel: usize,
+    /// Chosen anchor ("" = whole item) and resolved target for the pending add.
+    pub comment_section: String,
+    pub comment_target: String,
+    pub comment_ed: EditorState,
+    pub comment_handler: EditorEventHandler,
 
     /// Hit-test regions recorded by the last draw (view.rs).
     pub hits: Hits,
@@ -213,6 +226,12 @@ impl App {
             edit_priority: String::new(),
             edit_rev: 0,
             edit_return: Mode::List,
+            comment_headings: Vec::new(),
+            comment_anchor_sel: 0,
+            comment_section: String::new(),
+            comment_target: String::new(),
+            comment_ed: new_editor("", false),
+            comment_handler: EditorEventHandler::emacs_mode(),
             hits: Hits::default(),
         };
         app.load_ui_state();
@@ -402,6 +421,84 @@ impl App {
         }
     }
 
+    /// Start the add-comment flow for the current read target. Skips the anchor
+    /// picker when the body has no headings (goes straight to item-level input).
+    pub fn begin_comment(&mut self) {
+        self.comment_target = self.read_target();
+        if self.comment_target.is_empty() {
+            return;
+        }
+        self.comment_headings = crate::store::parse_headings(&self.read_body);
+        self.comment_ed = new_editor("", false);
+        if self.comment_headings.is_empty() {
+            self.comment_section = String::new();
+            self.mode = Mode::CommentInput;
+        } else {
+            self.comment_anchor_sel = 0; // 0 = whole item
+            self.mode = Mode::CommentAnchor;
+        }
+    }
+
+    fn key_comment_anchor(&mut self, k: KeyEvent) {
+        // options: index 0 = whole item, 1..=N = headings[idx-1]
+        let n = self.comment_headings.len() + 1;
+        match k.code {
+            KeyCode::Esc | KeyCode::Char('q') => self.mode = Mode::Read,
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.comment_anchor_sel = (self.comment_anchor_sel + 1) % n;
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.comment_anchor_sel = (self.comment_anchor_sel + n - 1) % n;
+            }
+            KeyCode::Enter => {
+                self.comment_section = if self.comment_anchor_sel == 0 {
+                    String::new()
+                } else {
+                    self.comment_headings[self.comment_anchor_sel - 1].clone()
+                };
+                self.comment_ed = new_editor("", false);
+                self.mode = Mode::CommentInput;
+            }
+            _ => {}
+        }
+    }
+
+    fn key_comment_input(&mut self, k: KeyEvent) {
+        let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+        match k.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Read;
+                return;
+            }
+            KeyCode::Char('d') if ctrl => {
+                self.save_comment();
+                return;
+            }
+            KeyCode::Enter if ctrl => {
+                self.save_comment();
+                return;
+            }
+            _ => {}
+        }
+        self.comment_handler.on_key_event(k, &mut self.comment_ed);
+    }
+
+    fn save_comment(&mut self) {
+        let text = editor_text(&self.comment_ed);
+        if text.trim().is_empty() {
+            self.mode = Mode::Read; // empty = cancel
+            return;
+        }
+        let target = self.comment_target.clone();
+        let section = self.comment_section.clone();
+        match self.p.add_comment(&target, &section, &text) {
+            Ok(_) => self.status.clear(),
+            Err(e) => self.status = format!("comment failed: {e}"),
+        }
+        self.mode = Mode::Read;
+        self.reload(); // refresh comment_counts so the badge updates
+    }
+
     // ---- keyboard ----
 
     pub fn on_key(&mut self, k: KeyEvent) {
@@ -413,6 +510,8 @@ impl App {
             Mode::DiscardConfirm => self.key_discard_confirm(k),
             Mode::Filter => self.key_filter(k),
             Mode::Help => self.key_help(k),
+            Mode::CommentAnchor => self.key_comment_anchor(k),
+            Mode::CommentInput => self.key_comment_input(k),
         }
     }
 
@@ -490,6 +589,7 @@ impl App {
                 self.reload();
             }
             KeyCode::Char('e') | KeyCode::Enter if self.tab != Tab::Plans => self.begin_edit(),
+            KeyCode::Char('C') => self.begin_comment(),
             KeyCode::Char('y') => self.yank(),
             KeyCode::Char('Y') => self.yank_content(),
             // body scrolling (clamped against the rendered height at draw time)
@@ -615,6 +715,10 @@ impl App {
     }
 
     pub fn on_paste(&mut self, text: String) {
+        if self.mode == Mode::CommentInput {
+            self.comment_handler.on_paste_event(text, &mut self.comment_ed);
+            return;
+        }
         if self.mode == Mode::Edit {
             match self.edit_focus {
                 Focus::Title => self.title_handler.on_paste_event(text, &mut self.title_ed),

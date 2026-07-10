@@ -168,6 +168,14 @@ pub fn draw(app: &mut App, f: &mut Frame) {
             draw_list(app, f, content); // list stays visible behind the overlay
             draw_help(f, content);
         }
+        Mode::CommentAnchor => {
+            draw_read(app, f, content);
+            draw_comment_anchor(app, f, content);
+        }
+        Mode::CommentInput => {
+            draw_read(app, f, content);
+            draw_comment_input(app, f, content);
+        }
         _ => draw_list(app, f, content), // List, Confirm, Filter
     }
     draw_footer(app, f, footer_area);
@@ -651,6 +659,67 @@ fn draw_edit(app: &mut App, f: &mut Frame, area: Rect) {
     }
 }
 
+fn draw_comment_anchor(app: &App, f: &mut Frame, area: Rect) {
+    let mut opts: Vec<String> = vec!["(whole item)".to_string()];
+    opts.extend(app.comment_headings.iter().cloned());
+    let lines: Vec<Line> = opts
+        .iter()
+        .enumerate()
+        .map(|(i, o)| {
+            let marker = if i == app.comment_anchor_sel { "» " } else { "  " };
+            let l = Line::from(format!("{marker}{o}"));
+            if i == app.comment_anchor_sel {
+                l.add_modifier(Modifier::REVERSED)
+            } else {
+                l
+            }
+        })
+        .collect();
+    let content_w = lines.iter().map(|l| l.width()).max().unwrap_or(0) as u16;
+    let want_w = (content_w + 4).min(area.width);
+    let want_h = (lines.len() as u16 + 2).min(area.height);
+    let x = area.x + (area.width.saturating_sub(want_w)) / 2;
+    let y = area.y + (area.height.saturating_sub(want_h)) / 2;
+    let popup = Rect::new(x, y, want_w, want_h);
+    f.render_widget(Clear, popup);
+    let block = Block::bordered()
+        .title(" Anchor to · j/k Enter Esc ")
+        .padding(Padding::horizontal(1));
+    f.render_widget(Paragraph::new(lines).block(block), popup);
+}
+
+fn draw_comment_input(app: &mut App, f: &mut Frame, area: Rect) {
+    let anchor = if app.comment_section.is_empty() {
+        "whole item".to_string()
+    } else {
+        app.comment_section.clone()
+    };
+    let want_h = (area.height / 3).max(4);
+    let popup = Rect::new(
+        area.x + 2,
+        area.y + area.height.saturating_sub(want_h) / 2,
+        area.width.saturating_sub(4),
+        want_h,
+    );
+    f.render_widget(Clear, popup);
+    // Own the bordered card here (card_theme requires a &'static title; the
+    // anchor is dynamic). The theme still mirrors card_theme's essentials:
+    // terminal base colors, reversed cursor, and NO edtui status line — without
+    // hide_status_line() edtui renders its default black box + "Insert" bar.
+    let block = Block::bordered()
+        .title(format!(" new comment · {anchor} — ctrl+d save · esc cancel "))
+        .border_style(Style::new().fg(Color::Cyan));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+    let theme = EditorTheme::default()
+        .base(Style::default())
+        .selection_style(Style::default().add_modifier(Modifier::REVERSED))
+        .cursor_style(Style::default().add_modifier(Modifier::REVERSED))
+        .hide_status_line();
+    let view = EditorView::new(&mut app.comment_ed).theme(theme).wrap(true);
+    f.render_widget(view, inner);
+}
+
 fn draw_footer(app: &App, f: &mut Frame, area: Rect) {
     let mut lines = vec![Line::from(footer(app)).dim()];
     if !app.status.is_empty() {
@@ -680,6 +749,8 @@ fn footer(app: &App) -> &'static str {
         Mode::DiscardConfirm => "y discard · n/esc keep editing",
         Mode::Filter => "type to filter · enter apply · esc clear",
         Mode::Help => "esc · q · ? — close",
+        Mode::CommentAnchor => "j/k pick · enter select · esc cancel",
+        Mode::CommentInput => "ctrl+d save · esc cancel",
     }
 }
 
