@@ -174,11 +174,21 @@ fn heading_text(line: &str) -> Option<(String, usize)> {
     Some((t[n + 1..].trim().to_string(), n))
 }
 
-fn norm_heading(h: &str) -> String {
+pub(crate) fn norm_heading(h: &str) -> String {
     h.split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase()
+}
+
+/// ATX heading texts in document order, built on the store's own `heading_text`
+/// grammar (so "# H" is a heading but "#H" is not). Not code-fence aware.
+pub(crate) fn parse_headings(content: &str) -> Vec<String> {
+    content
+        .split('\n')
+        .filter_map(|l| heading_text(l).map(|(h, _)| h))
+        .filter(|h| !h.is_empty())
+        .collect()
 }
 
 fn headings_of(content: &str) -> String {
@@ -235,7 +245,7 @@ impl Project {
         self.scratch_dir().join(format!("{id}.md"))
     }
 
-    fn read_pad(&self, id: &str) -> Result<Scratchpad> {
+    pub(crate) fn read_pad(&self, id: &str) -> Result<Scratchpad> {
         match std::fs::read(self.pad_path(id)) {
             Ok(b) => Ok(parse_pad(&b)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(Error::NotFound),
@@ -410,7 +420,8 @@ impl Project {
             }
             std::fs::remove_file(&path)?;
             Ok(())
-        })
+        })?;
+        self.delete_comments_for_target(id)
     }
 
     /// exp_rev -1 skips the guard here by design (append is the documented
@@ -619,6 +630,13 @@ mod tests {
     use super::*;
     use crate::store::testutil::{TempDir, new_project};
     use crate::store::{Error, resolve_project_in};
+
+    #[test]
+    fn parse_headings_uses_store_grammar() {
+        // "# " required; "#nospace" is not a heading, matching heading_text.
+        let body = "# Title\n\n## Phase 1\ntext\n#nospace\n### Sub\n";
+        assert_eq!(super::parse_headings(body), vec!["Title", "Phase 1", "Sub"]);
+    }
 
     #[test]
     fn test_create_read_scratchpad() {

@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 **tally** — project-scoped todos & scratchpads for you and your agents, shipped as a
-herdr plugin. One store behind three thin adapters: a CLI, an MCP server (33 tools),
+herdr plugin. One store behind three thin adapters: a CLI, an MCP server (38 tools),
 and a ratatui TUI.
 
 ## Architecture
@@ -15,7 +15,7 @@ store methods. Logic and tests live in store. If CLI and MCP disagree, that's a 
   `git rev-parse --path-format=absolute --git-common-dir` (worktrees share one store),
   symlinks resolved. The golden test in `src/store/project.rs` pins it — the store is
   keyed by this, so any change orphans existing data. Never "fix" that test.
-- **MCP tool names are fixed** (`todo_*` / `scratchpad_*`, 33 tools) — agent prompts
+- **MCP tool names are fixed** (`todo_*` / `scratchpad_*` / `comment_*`, 38 tools) — agent prompts
   depend on them. Newline-delimited JSON-RPC 2.0 over stdio, NOT Content-Length
   framing. `notifications/initialized` gets no response. A panicking tool must not
   kill the server (return `Result` / `catch_unwind`).

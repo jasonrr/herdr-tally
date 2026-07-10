@@ -11,6 +11,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Padding, Paragraph, Widget, Wrap};
 
 use super::app::{App, Focus, Mode, Tab};
+use crate::store::Comment;
 
 const TAB_LABELS: [&str; 3] = ["1 Todos", "2 Scratchpads", "3 Plans"];
 const TAB_PREFIX: &str = "  ";
@@ -167,6 +168,14 @@ pub fn draw(app: &mut App, f: &mut Frame) {
             draw_list(app, f, content); // list stays visible behind the overlay
             draw_help(f, content);
         }
+        Mode::CommentAnchor => {
+            draw_read(app, f, content);
+            draw_comment_anchor(app, f, content);
+        }
+        Mode::CommentInput => {
+            draw_read(app, f, content);
+            draw_comment_input(app, f, content);
+        }
         _ => draw_list(app, f, content), // List, Confirm, Filter
     }
     draw_footer(app, f, footer_area);
@@ -231,7 +240,13 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
                 } else {
                     ""
                 };
-                let left = format!("{glyph} [{}] {}{blocked}", t.priority, t.title);
+                let n = app.comment_counts.get(&t.id).copied().unwrap_or(0);
+                let badge = if n > 0 {
+                    format!(" 💬{n}")
+                } else {
+                    String::new()
+                };
+                let left = format!("{glyph} [{}] {}{blocked}{badge}", t.priority, t.title);
                 let rel = crate::tui::time::humanize_since(&t.updated, now);
                 let right = match &t.lock {
                     Some(l) if !l.owner.is_empty() => format!("🔒 {} {}", l.owner, rel),
@@ -260,8 +275,14 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
             }
             for (i, s) in vis.iter().enumerate() {
                 let rel = crate::tui::time::humanize_since(&s.updated, now);
+                let n = app.comment_counts.get(&s.id).copied().unwrap_or(0);
+                let badge = if n > 0 {
+                    format!(" 💬{n}")
+                } else {
+                    String::new()
+                };
                 rows.push(right_aligned_row(
-                    format!("• {}", s.title),
+                    format!("• {}{badge}", s.title),
                     rel,
                     list_area.width as usize,
                     i == cursor,
@@ -281,8 +302,14 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
                 }
             }
             for (i, d) in vis.iter().enumerate() {
+                let n = app.comment_counts.get(&d.rel_path).copied().unwrap_or(0);
+                let badge = if n > 0 {
+                    format!(" 💬{n}")
+                } else {
+                    String::new()
+                };
                 rows.push(styled_row(
-                    format!("• {}", d.rel_path),
+                    format!("• {}{badge}", d.rel_path),
                     i == cursor,
                     cursor_style,
                 ));
@@ -331,6 +358,133 @@ fn right_aligned_row(
 ) -> Line<'static> {
     let row = pad_right_aligned(left, &right, width);
     styled_row(row, selected, cursor_style)
+}
+
+/// Render a target's comments as lines, grouped by anchor: each body heading
+/// that has comments (document order, deduped), then any "detached" sections
+/// (anchored to a heading no longer present), then the whole-item group. Section
+/// matching uses `norm_heading` (case/whitespace-insensitive), so it agrees with
+/// the store's `section_of`/`append_section`. Events render dimmed with a ⋯
+/// marker; notes show author + relative time. Pure + testable.
+pub(crate) fn comment_block(
+    comments: &[Comment],
+    headings: &[String],
+    now: u64,
+) -> Vec<Line<'static>> {
+    use crate::store::norm_heading;
+    use crate::tui::time::humanize_since;
+    let mut lines: Vec<Line> = Vec::new();
+    if comments.is_empty() {
+        return lines;
+    }
+    let render_group = |lines: &mut Vec<Line>, label: String, group: Vec<&Comment>| {
+        if group.is_empty() {
+            return;
+        }
+        lines.push(Line::from(format!("── comments · {label} ──")).dim());
+        for c in group {
+            if c.kind == "event" {
+                lines.push(Line::from(format!("  ⋯ {} ({})", c.text, c.author)).dim());
+            } else {
+                let rel = humanize_since(&c.created, now);
+                lines.push(Line::from(format!("  {} ·{}  {}", c.author, rel, c.text)));
+            }
+        }
+    };
+    // named sections present in the body, document order, deduped on normalized form
+    let mut seen: Vec<String> = Vec::new();
+    for h in headings {
+        let key = norm_heading(h);
+        if seen.contains(&key) {
+            continue; // duplicate heading text — group only once
+        }
+        seen.push(key.clone());
+        let g: Vec<&Comment> = comments
+            .iter()
+            .filter(|c| norm_heading(&c.section) == key)
+            .collect();
+        render_group(&mut lines, h.clone(), g);
+    }
+    // detached: a non-empty section whose normalized form is not a current heading
+    let mut detached: Vec<String> = Vec::new();
+    for c in comments {
+        if c.section.is_empty() {
+            continue;
+        }
+        let key = norm_heading(&c.section);
+        if !seen.contains(&key) && !detached.contains(&key) {
+            detached.push(key.clone());
+            let g: Vec<&Comment> = comments
+                .iter()
+                .filter(|c2| norm_heading(&c2.section) == key)
+                .collect();
+            render_group(&mut lines, format!("{} (detached)", c.section), g);
+        }
+    }
+    // whole-item group last
+    let whole: Vec<&Comment> = comments.iter().filter(|c| c.section.is_empty()).collect();
+    render_group(&mut lines, "(whole)".to_string(), whole);
+    lines
+}
+
+#[cfg(test)]
+mod comment_tests {
+    use super::comment_block;
+    use crate::store::Comment;
+
+    fn note(section: &str, text: &str) -> Comment {
+        Comment {
+            id: "c_1".into(),
+            target: "s_x".into(),
+            section: section.into(),
+            author: "jason".into(),
+            created: String::new(),
+            kind: "note".into(),
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn groups_named_then_detached_then_whole() {
+        let comments = vec![
+            note("Phase 1", "anchored"),
+            note("", "whole item"),
+            note("Ghost", "orphaned"),
+        ];
+        let headings = vec!["Phase 1".to_string()];
+        let lines = comment_block(&comments, &headings, 0);
+        let text: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+        let joined = text.join("\n");
+        assert!(joined.contains("comments · Phase 1"));
+        assert!(joined.contains("Ghost (detached)"));
+        assert!(joined.contains("comments · (whole)"));
+        let p1 = text.iter().position(|l| l.contains("Phase 1")).unwrap();
+        let gh = text.iter().position(|l| l.contains("detached")).unwrap();
+        let wh = text.iter().position(|l| l.contains("(whole)")).unwrap();
+        assert!(p1 < gh && gh < wh, "order wrong: {text:?}");
+    }
+
+    #[test]
+    fn matches_section_case_and_whitespace_insensitively() {
+        // agent anchored "phase 1"; human heading "Phase  1" (double space)
+        let comments = vec![note("phase 1", "lower"), note("Phase 1", "title")];
+        let headings = vec!["Phase  1".to_string()];
+        let joined: String = comment_block(&comments, &headings, 0)
+            .iter()
+            .map(|l| l.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            !joined.contains("detached"),
+            "should not be detached: {joined}"
+        );
+        assert!(joined.contains("lower") && joined.contains("title"));
+    }
+
+    #[test]
+    fn empty_yields_no_lines() {
+        assert!(comment_block(&[], &[], 0).is_empty());
+    }
 }
 
 /// Places `right` at the right edge of `width` columns (char-counted, matching
@@ -520,6 +674,73 @@ fn draw_edit(app: &mut App, f: &mut Frame, area: Rect) {
     }
 }
 
+fn draw_comment_anchor(app: &App, f: &mut Frame, area: Rect) {
+    let mut opts: Vec<String> = vec!["(whole item)".to_string()];
+    opts.extend(app.comment_headings.iter().cloned());
+    let lines: Vec<Line> = opts
+        .iter()
+        .enumerate()
+        .map(|(i, o)| {
+            let marker = if i == app.comment_anchor_sel {
+                "» "
+            } else {
+                "  "
+            };
+            let l = Line::from(format!("{marker}{o}"));
+            if i == app.comment_anchor_sel {
+                l.add_modifier(Modifier::REVERSED)
+            } else {
+                l
+            }
+        })
+        .collect();
+    let content_w = lines.iter().map(|l| l.width()).max().unwrap_or(0) as u16;
+    let want_w = (content_w + 4).min(area.width);
+    let want_h = (lines.len() as u16 + 2).min(area.height);
+    let x = area.x + (area.width.saturating_sub(want_w)) / 2;
+    let y = area.y + (area.height.saturating_sub(want_h)) / 2;
+    let popup = Rect::new(x, y, want_w, want_h);
+    f.render_widget(Clear, popup);
+    let block = Block::bordered()
+        .title(" Anchor to · j/k Enter Esc ")
+        .padding(Padding::horizontal(1));
+    f.render_widget(Paragraph::new(lines).block(block), popup);
+}
+
+fn draw_comment_input(app: &mut App, f: &mut Frame, area: Rect) {
+    let anchor = if app.comment_section.is_empty() {
+        "whole item".to_string()
+    } else {
+        app.comment_section.clone()
+    };
+    let want_h = (area.height / 3).max(4);
+    let popup = Rect::new(
+        area.x + 2,
+        area.y + area.height.saturating_sub(want_h) / 2,
+        area.width.saturating_sub(4),
+        want_h,
+    );
+    f.render_widget(Clear, popup);
+    // Own the bordered card here (card_theme requires a &'static title; the
+    // anchor is dynamic). The theme still mirrors card_theme's essentials:
+    // terminal base colors, reversed cursor, and NO edtui status line — without
+    // hide_status_line() edtui renders its default black box + "Insert" bar.
+    let block = Block::bordered()
+        .title(format!(
+            " new comment · {anchor} — ctrl+d save · esc cancel "
+        ))
+        .border_style(Style::new().fg(Color::Cyan));
+    let inner = block.inner(popup);
+    f.render_widget(block, popup);
+    let theme = EditorTheme::default()
+        .base(Style::default())
+        .selection_style(Style::default().add_modifier(Modifier::REVERSED))
+        .cursor_style(Style::default().add_modifier(Modifier::REVERSED))
+        .hide_status_line();
+    let view = EditorView::new(&mut app.comment_ed).theme(theme).wrap(true);
+    f.render_widget(view, inner);
+}
+
 fn draw_footer(app: &App, f: &mut Frame, area: Rect) {
     let mut lines = vec![Line::from(footer(app)).dim()];
     if !app.status.is_empty() {
@@ -537,9 +758,9 @@ fn footer(app: &App) -> &'static str {
             Tab::Plans => "↑↓ · enter · / filter · r · ? help",
         },
         Mode::Read => match app.tab {
-            Tab::Todos => "space done · p prio · e edit · y id · Y copy · R raw · esc back",
-            Tab::Scratchpads => "e edit · y id · Y copy · R raw · esc back",
-            Tab::Plans => "y id · Y copy · R raw · esc back",
+            Tab::Todos => "space done · p prio · e edit · C comment · y id · R raw · esc back",
+            Tab::Scratchpads => "e edit · C comment · y id · Y copy · R raw · esc back",
+            Tab::Plans => "C comment · y id · Y copy · R raw · esc back",
         },
         Mode::Confirm => "y confirm · n/esc cancel",
         Mode::Edit => match app.tab {
@@ -549,6 +770,8 @@ fn footer(app: &App) -> &'static str {
         Mode::DiscardConfirm => "y discard · n/esc keep editing",
         Mode::Filter => "type to filter · enter apply · esc clear",
         Mode::Help => "esc · q · ? — close",
+        Mode::CommentAnchor => "j/k pick · enter select · esc cancel",
+        Mode::CommentInput => "ctrl+d save · esc cancel",
     }
 }
 
@@ -571,6 +794,7 @@ const HELP_ROWS: &[(&str, &str)] = &[
     ("", ""),
     ("Read", ""),
     ("space p e", "done · prio · edit"),
+    ("C", "add comment (pick anchor, then type)"),
     ("y  Y  R", "copy id · copy body · raw"),
     ("ctrl+d/u", "scroll · esc back"),
     ("", ""),

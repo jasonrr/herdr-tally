@@ -3,7 +3,7 @@
 //! methods driven by the crossterm event loop in mod.rs, and mouse hit-testing
 //! reads the regions the last draw recorded in `Hits` (view.rs) instead of
 //! hardcoded column math.
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::process::{Command, Stdio};
 
@@ -11,7 +11,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use edtui::actions::CopySelection;
 use edtui::clipboard::ClipboardTrait;
 use edtui::{EditorEventHandler, EditorMode, EditorState, Lines};
-use ratatui::text::Text;
+use ratatui::text::{Line, Text};
 
 use crate::plans::{self, Plan};
 use crate::store::{Project, Scratchpad, Todo, TodoFilter, TodoUpdate};
@@ -46,6 +46,9 @@ pub enum Mode {
     Filter,
     /// Shortcuts overlay, drawn over the list; any dismiss key restores List.
     Help,
+    /// Two-step add-comment: pick an anchor, then type the note.
+    CommentAnchor,
+    CommentInput,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -65,6 +68,9 @@ pub struct App {
     /// Ids of blocked todos, computed once per reload, not per frame. Id-keyed
     /// (not positional) so it survives the `/` filter narrowing `todos`' indices.
     pub blocked: HashSet<String>,
+    /// target -> note count, id/rel_path-keyed so it survives filter re-indexing
+    /// (same discipline as `blocked`). Notes only — events are excluded upstream.
+    pub comment_counts: HashMap<String, usize>,
     pub pads: Vec<Scratchpad>,
     pub plans: Vec<Plan>,
     pub cursor: [usize; 3],
@@ -113,6 +119,16 @@ pub struct App {
     pub edit_rev: i64,
     /// Mode to return to on save/cancel (List or Read).
     pub edit_return: Mode,
+
+    // add-comment flow
+    /// Headings offered by the anchor picker (index 0 is the implicit whole-item).
+    pub comment_headings: Vec<String>,
+    pub comment_anchor_sel: usize,
+    /// Chosen anchor ("" = whole item) and resolved target for the pending add.
+    pub comment_section: String,
+    pub comment_target: String,
+    pub comment_ed: EditorState,
+    pub comment_handler: EditorEventHandler,
 
     /// Hit-test regions recorded by the last draw (view.rs).
     pub hits: Hits,
@@ -183,6 +199,7 @@ impl App {
             quit: false,
             todos: Vec::new(),
             blocked: HashSet::new(),
+            comment_counts: HashMap::new(),
             pads: Vec::new(),
             plans: Vec::new(),
             cursor: [0; 3],
@@ -209,6 +226,12 @@ impl App {
             edit_priority: String::new(),
             edit_rev: 0,
             edit_return: Mode::List,
+            comment_headings: Vec::new(),
+            comment_anchor_sel: 0,
+            comment_section: String::new(),
+            comment_target: String::new(),
+            comment_ed: new_editor("", false),
+            comment_handler: EditorEventHandler::emacs_mode(),
             hits: Hits::default(),
         };
         app.load_ui_state();
@@ -269,6 +292,7 @@ impl App {
             Err(e) => self.status = format!("load failed: {e}"),
         }
         self.plans = plans::list(&self.p.path, &plans::load_plan_paths());
+        self.comment_counts = self.p.comment_counts().unwrap_or_default();
 
         if matches!(self.mode, Mode::Read | Mode::Edit | Mode::DiscardConfirm)
             && !self.read_id.is_empty()
@@ -279,6 +303,9 @@ impl App {
             self.pin_cursor_to(&id);
         }
         self.clamp_cursor();
+        if self.mode == Mode::Read {
+            self.rebuild_read_text();
+        }
     }
 
     /// The Plans list after the active filter (case-insensitive substring over
@@ -379,6 +406,99 @@ impl App {
         }
     }
 
+    /// The comment target for the current read view. For todos/pads this is the
+    /// store id (`read_id`); for plans `read_id` is an abs_path, so map it back
+    /// to the portable rel_path the store keys on.
+    pub fn read_target(&self) -> String {
+        if self.tab == Tab::Plans {
+            self.plans
+                .iter()
+                .find(|d| d.abs_path.to_string_lossy() == self.read_id)
+                .map(|d| d.rel_path.clone())
+                .unwrap_or_else(|| self.read_id.clone())
+        } else {
+            self.read_id.clone()
+        }
+    }
+
+    /// Start the add-comment flow for the current read target. Skips the anchor
+    /// picker when the body has no headings (goes straight to item-level input).
+    pub fn begin_comment(&mut self) {
+        self.comment_target = self.read_target();
+        if self.comment_target.is_empty() {
+            return;
+        }
+        self.comment_headings = crate::store::parse_headings(&self.read_body);
+        self.comment_ed = new_editor("", false);
+        if self.comment_headings.is_empty() {
+            self.comment_section = String::new();
+            self.mode = Mode::CommentInput;
+        } else {
+            self.comment_anchor_sel = 0; // 0 = whole item
+            self.mode = Mode::CommentAnchor;
+        }
+    }
+
+    fn key_comment_anchor(&mut self, k: KeyEvent) {
+        // options: index 0 = whole item, 1..=N = headings[idx-1]
+        let n = self.comment_headings.len() + 1;
+        match k.code {
+            KeyCode::Esc | KeyCode::Char('q') => self.mode = Mode::Read,
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.comment_anchor_sel = (self.comment_anchor_sel + 1) % n;
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.comment_anchor_sel = (self.comment_anchor_sel + n - 1) % n;
+            }
+            KeyCode::Enter => {
+                self.comment_section = if self.comment_anchor_sel == 0 {
+                    String::new()
+                } else {
+                    self.comment_headings[self.comment_anchor_sel - 1].clone()
+                };
+                self.comment_ed = new_editor("", false);
+                self.mode = Mode::CommentInput;
+            }
+            _ => {}
+        }
+    }
+
+    fn key_comment_input(&mut self, k: KeyEvent) {
+        let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+        match k.code {
+            KeyCode::Esc => {
+                self.mode = Mode::Read;
+                return;
+            }
+            KeyCode::Char('d') if ctrl => {
+                self.save_comment();
+                return;
+            }
+            KeyCode::Enter if ctrl => {
+                self.save_comment();
+                return;
+            }
+            _ => {}
+        }
+        self.comment_handler.on_key_event(k, &mut self.comment_ed);
+    }
+
+    fn save_comment(&mut self) {
+        let text = editor_text(&self.comment_ed);
+        if text.trim().is_empty() {
+            self.mode = Mode::Read; // empty = cancel
+            return;
+        }
+        let target = self.comment_target.clone();
+        let section = self.comment_section.clone();
+        match self.p.add_comment(&target, &section, &text) {
+            Ok(_) => self.status.clear(),
+            Err(e) => self.status = format!("comment failed: {e}"),
+        }
+        self.mode = Mode::Read;
+        self.reload(); // refresh comment_counts so the badge updates
+    }
+
     // ---- keyboard ----
 
     pub fn on_key(&mut self, k: KeyEvent) {
@@ -390,6 +510,8 @@ impl App {
             Mode::DiscardConfirm => self.key_discard_confirm(k),
             Mode::Filter => self.key_filter(k),
             Mode::Help => self.key_help(k),
+            Mode::CommentAnchor => self.key_comment_anchor(k),
+            Mode::CommentInput => self.key_comment_input(k),
         }
     }
 
@@ -467,6 +589,7 @@ impl App {
                 self.reload();
             }
             KeyCode::Char('e') | KeyCode::Enter if self.tab != Tab::Plans => self.begin_edit(),
+            KeyCode::Char('C') => self.begin_comment(),
             KeyCode::Char('y') => self.yank(),
             KeyCode::Char('Y') => self.yank_content(),
             // body scrolling (clamped against the rendered height at draw time)
@@ -592,6 +715,11 @@ impl App {
     }
 
     pub fn on_paste(&mut self, text: String) {
+        if self.mode == Mode::CommentInput {
+            self.comment_handler
+                .on_paste_event(text, &mut self.comment_ed);
+            return;
+        }
         if self.mode == Mode::Edit {
             match self.edit_focus {
                 Focus::Title => self.title_handler.on_paste_event(text, &mut self.title_ed),
@@ -883,11 +1011,24 @@ impl App {
     }
 
     pub fn rebuild_read_text(&mut self) {
-        self.read_text = if self.raw {
+        let mut text = if self.raw {
             Text::raw(self.read_body.clone())
         } else {
             markdown::render(&self.read_body)
         };
+        let comments = self
+            .p
+            .list_comments(&self.read_target())
+            .unwrap_or_default();
+        if !comments.is_empty() {
+            let headings = crate::store::parse_headings(&self.read_body);
+            let now = crate::tui::time::now_unix();
+            text.lines.push(Line::from("")); // spacer between body and thread
+            for l in crate::tui::view::comment_block(&comments, &headings, now) {
+                text.lines.push(l);
+            }
+        }
+        self.read_text = text;
         self.read_gen = self.read_gen.wrapping_add(1);
     }
 

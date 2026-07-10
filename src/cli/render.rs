@@ -3,7 +3,7 @@
 //! flat list. Byte-for-byte the same document the Go renderer emitted.
 use std::io::{self, Write};
 
-use crate::store::{Project, Scratchpad, Todo};
+use crate::store::{Comment, CommentSummary, Project, Scratchpad, Todo};
 
 const STATUS_ORDER: [&str; 4] = ["in_progress", "open", "backlog", "completed"];
 
@@ -88,6 +88,83 @@ pub(crate) fn render_scratchpads(
     }
     if pads.is_empty() {
         writeln!(out, "_No scratchpads yet._")?;
+    }
+    Ok(())
+}
+
+pub(crate) fn render_comments(out: &mut dyn Write, comments: &[Comment]) -> io::Result<()> {
+    if comments.is_empty() {
+        writeln!(out, "_No comments yet._")?;
+        return Ok(());
+    }
+    for c in comments {
+        let anchor = if c.section.is_empty() {
+            String::new()
+        } else {
+            format!(" · {}", c.section)
+        };
+        // events read as log lines; notes read as authored comments
+        if c.kind == "event" {
+            writeln!(
+                out,
+                "- ⋯ _{}_ — {}  \n  <sub>{}</sub>",
+                c.text, c.author, c.created
+            )?;
+        } else {
+            writeln!(
+                out,
+                "- **{}**{anchor} — {}  \n  <sub>{} · {}</sub>",
+                c.author, c.text, c.created, c.id
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Newest-first flat list; each row prefixed with its resolved target label.
+pub(crate) fn render_recent_comments(
+    out: &mut dyn Write,
+    rows: &[(String, &Comment)],
+) -> io::Result<()> {
+    if rows.is_empty() {
+        writeln!(out, "_No comments yet._")?;
+        return Ok(());
+    }
+    for (label, c) in rows {
+        let anchor = if c.section.is_empty() {
+            String::new()
+        } else {
+            format!(" · {}", c.section)
+        };
+        // events read as log lines; notes read as authored comments
+        if c.kind == "event" {
+            writeln!(
+                out,
+                "- {label} — ⋯ _{}_ — {}  \n  <sub>{}</sub>",
+                c.text, c.author, c.created
+            )?;
+        } else {
+            writeln!(
+                out,
+                "- {label} — **{}**{anchor}: {}  \n  <sub>{} · {}</sub>",
+                c.author, c.text, c.created, c.id
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Per-target view: "☐ Fix auth · 💬2 · last: "hold off"".
+pub(crate) fn render_comment_summaries(
+    out: &mut dyn Write,
+    rows: &[(String, &CommentSummary)],
+) -> io::Result<()> {
+    if rows.is_empty() {
+        writeln!(out, "_No comments yet._")?;
+        return Ok(());
+    }
+    for (label, s) in rows {
+        writeln!(out, "- {label} · 💬{} · last: \"{}\"", s.count, s.latest)?;
     }
     Ok(())
 }

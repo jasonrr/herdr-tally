@@ -124,6 +124,10 @@ impl Project {
         self.dir.join("todos.json")
     }
 
+    pub(crate) fn comments_path(&self) -> PathBuf {
+        self.dir.join("comments.json")
+    }
+
     pub(crate) fn scratch_dir(&self) -> PathBuf {
         self.dir.join("scratchpads")
     }
