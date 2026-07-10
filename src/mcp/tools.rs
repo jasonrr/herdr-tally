@@ -1,4 +1,5 @@
-// Port of internal/mcp/tools.go — the 33 Solo-identical tools. Each tool is a
+// Port of internal/mcp/tools.go — the 33 Solo-identical tools plus 3 comment_*
+// tools (36 total). Each tool is a
 // declarative {name, description, inputSchema} plus a `run` fn that calls
 // exactly ONE store method, keeping the adapter mechanical (logic lives in
 // store). Tool names/descriptions/schemas are byte-parity with the Go registry
@@ -52,6 +53,8 @@ struct Args {
     // coordination
     owner: String,
     pid: i64,
+    // comments
+    section: String,
 }
 
 impl Args {
@@ -287,6 +290,16 @@ fn registry() -> Vec<Tool> {
         Tool { name: "scratchpad_load_from_file", desc: "Load a scratchpad from a file.",
             schema: obj(req(&["path"]), json!({"path": prop("string", "")})),
             run: |p, a| val(p.load_scratchpad_from_file(&a.path)?) },
+        // ─── comments ────────────────────────────────────────────
+        Tool { name: "comment_add", desc: "Add a comment to a todo (t_…), scratchpad (s_…), or plan (rel_path). section is an optional heading to anchor to; empty = whole item.",
+            schema: obj(req(&["id", "body"]), json!({"id": prop("string", "target: t_… | s_… | plan rel_path"), "body": prop("string", "comment text"), "section": prop("string", "heading to anchor to; empty = whole item")})),
+            run: |p, a| val(p.add_comment(&a.id, &a.section, &a.body)?) },
+        Tool { name: "comment_list", desc: "List comments on a todo, scratchpad, or plan.",
+            schema: obj(req(&["id"]), json!({"id": prop("string", "target: t_… | s_… | plan rel_path")})),
+            run: |p, a| val(p.list_comments(&a.id)?) },
+        Tool { name: "comment_delete", desc: "Delete a comment by its id.",
+            schema: obj(req(&["id"]), json!({"id": prop("string", "comment id (c_…)")})),
+            run: |p, a| { p.delete_comment(&a.id)?; Ok(Value::Null) } },
     ]
 }
 
@@ -401,13 +414,34 @@ mod tests {
         );
     }
 
-    // Port of TestToolDefsCount — plus the exact 33 the port targets.
+    #[test]
+    fn test_dispatch_comment_add_list_delete() {
+        let e = Env::new();
+        let add = e
+            .call("comment_add", r#"{"id":"t_x","body":"hi","section":"Phase 1"}"#)
+            .unwrap();
+        assert_eq!(add["section"].as_str(), Some("Phase 1"));
+        assert_eq!(add["text"].as_str(), Some("hi"));
+        assert_eq!(add["target"].as_str(), Some("t_x"));
+        let cid = add["id"].as_str().unwrap().to_string();
+        let list = e.call("comment_list", r#"{"id":"t_x"}"#).unwrap();
+        assert!(serde_json::to_string(&list).unwrap().contains("hi"));
+        e.call("comment_delete", &format!(r#"{{"id":"{cid}"}}"#))
+            .unwrap();
+        let empty = e.call("comment_list", r#"{"id":"t_x"}"#).unwrap();
+        assert_eq!(empty.as_array().map(|a| a.len()), Some(0));
+    }
+
+    // Port of TestToolDefsCount — plus the exact tool count the port targets.
     #[test]
     fn test_tool_defs_count() {
         let defs = tool_defs();
         let n = defs.as_array().unwrap().len();
-        assert!(n >= 30, "want the full Solo tool set, got {n}");
-        assert_eq!(n, 33, "expected exactly 33 Solo tools, got {n}");
+        assert!(n >= 30, "want the full tool set, got {n}");
+        assert_eq!(
+            n, 36,
+            "expected exactly 36 tools (todo_* + scratchpad_* + comment_*), got {n}"
+        );
     }
 
     // Port of TestUnknownTool.
