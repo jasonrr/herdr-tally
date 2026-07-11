@@ -111,11 +111,17 @@ struct Tool {
     run: fn(&Project, &Args) -> Result<Value>,
 }
 
-// obj/prop/arr mirror the Go schema builders. A nil `required` in Go marshaled
-// to JSON `null` (a nil []string inside a map[string]any) — replicated here by
-// passing Value::Null, so the emitted inputSchema is byte-identical.
+// obj/prop/arr mirror the Go schema builders. An empty required set is passed as
+// Value::Null and OMITS the key: JSON Schema requires `required` to be an array
+// when present, and emitting `null` makes Claude Code reject the whole tools list
+// ("inputSchema.required expected an array but got null"). (Go marshaled a nil
+// []string to JSON null; matching that byte-for-byte broke the MCP handshake.)
 fn obj(required: Value, props: Value) -> Value {
-    json!({"type": "object", "required": required, "properties": props})
+    if required.is_null() {
+        json!({"type": "object", "properties": props})
+    } else {
+        json!({"type": "object", "required": required, "properties": props})
+    }
 }
 fn prop(typ: &str, desc: &str) -> Value {
     json!({"type": typ, "description": desc})
@@ -367,6 +373,24 @@ mod tests {
     use super::*;
     use crate::store;
     use crate::store::testutil::{TempDir, git_repo};
+
+    // JSON Schema requires `required` to be an array when present. An empty
+    // required set must OMIT the key, never emit `null` — a null makes Claude
+    // Code reject the entire tools list ("inputSchema.required expected an
+    // array but got null"), so an installed tally MCP exposes no tools.
+    #[test]
+    fn no_tool_emits_null_required() {
+        let defs = tool_defs();
+        for t in defs.as_array().expect("tool_defs is an array") {
+            let name = t["name"].as_str().unwrap_or("<unnamed>");
+            if let Some(req) = t["inputSchema"].get("required") {
+                assert!(
+                    req.is_array(),
+                    "tool {name}: inputSchema.required must be an array when present, got {req}"
+                );
+            }
+        }
+    }
 
     // A resolver over a fresh temp git repo + temp store root. Holds the guards
     // so both dirs outlive every dispatch call in a test. Go used chdir +
