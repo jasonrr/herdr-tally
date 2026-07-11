@@ -11,7 +11,7 @@
 # `plugin pane open`. So we match on label, scoped to this workspace via
 # $HERDR_WORKSPACE_ID (herdr sets this for every pane it spawns).
 set -euo pipefail
-export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 kind="${1:?todos|scratchpads}"
 herdr="${HERDR_BIN_PATH:-/opt/homebrew/bin/herdr}"
 
