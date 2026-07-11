@@ -11,7 +11,8 @@
 
 # tally
 
-**Project-scoped todos & scratchpads for you and your coding agents** — shipped as a
+**A shared ledger for you and your coding agents** — so the research, plans, and
+follow-ups a project accumulates outlive any single session. Shipped as a
 [herdr](https://herdr.dev) plugin.
 
 ## Why "tally"?
@@ -20,24 +21,35 @@ A drover walking a flock through a gate doesn't trust memory. They carry a
 **tally book** — a pocket ledger, four strokes and a slash — and mark every head
 that passes. The count in the book *is* the truth about the herd.
 
-**herdr** herds your agents. **tally** is the book you keep on them: the shared
-ledger of what's done, what's blocked, and where you left off — so the work
-survives any single session and both of you are looking at the same page.
+**herdr** herds your agents. **tally** is the book you keep on them — the shared
+ledger of what's done, what's blocked, and where you left off.
 
-## What it does
+## What it's for
 
-You and your agents share three things, all scoped to the current project (inferred
-from the git repo you're in):
+Say you're building a real feature. You have an agent research the approach — where
+does that thinking land when the session ends? You turn the research into a spec,
+then a plan; plenty of tools write those. You dogfood the result and turn up a dozen
+small things: a bug here, a confusing bit of UX there. Where do those go?
 
-- **Todos** — one per follow-up, blocker, or piece of work. Priorities, tags,
-  blockers, and a lock so whoever's editing the work can claim it.
-- **Scratchpads** — longer-lived working context: the plan before a multi-step
-  task, a handoff ("here's where I left off"), snippets too big for a todo.
-- **Comments** — margin notes on any todo, scratchpad, or plan: flag a decision or
-  a blocker, then read them back across everything with `tally comments recent`.
+Without a shared place, they scatter — buried in a chat transcript that scrolls
+away, kept in your head, or in a file the next agent never opens. tally is that
+place: one project-scoped ledger you and your agents both write to and read back — a
+two-way ledger, not a one-way log. The trail of the work outlives any single
+session, and you're both looking at the same page.
 
-Anything an agent writes, you see immediately in a live herdr pane — and anything
-you jot down, the agent reads back. It's a two-way ledger, not a one-way log.
+You keep four kinds of artifact in it:
+
+- **Todos** — the follow-ups, bugs, and blockers the work turns up, one each, so
+  nothing slips. Priorities, tags, blockers, and a lock so whoever's on it can claim it.
+- **Scratchpads** — the thinking that outgrows a todo: research results, a plan
+  you're about to run, a "here's where I left off" handoff.
+- **Plans** — the spec or plan you're executing against. You don't author these in
+  tally — plan mode, superpowers, ce and friends already write them to disk; tally
+  surfaces that markdown so you can read it and talk over it beside the live todos.
+  Point it at whichever dirs hold yours.
+- **Comments** — the thread that ties it together: a margin note on any todo,
+  scratchpad, or plan ("skip step 3", "blocked on the auth PR"), read back across
+  everything with `tally comments recent`.
 
 One store, three thin adapters over it:
 
@@ -47,9 +59,10 @@ One store, three thin adapters over it:
 | **MCP** | your agents | 38 `todo_*` / `scratchpad_*` / `comment_*` tools over stdio |
 | **TUI** | the herdr pane | `tally tui todos` / `tally tui scratchpads` |
 
-The `store` is the single source of truth; the adapters just call into it. Data
-lives under `~/.local/state/tally/`, keyed by project path — worktrees of the same
-repo share one store.
+The `store` is the single source of truth for todos, scratchpads, and their
+comments; plans are read straight from disk. Data lives under
+`~/.local/state/tally/`, keyed by project path — worktrees of the same repo share
+one store.
 
 ## Setup
 
@@ -89,6 +102,7 @@ tally scratchpads append-section <id> --heading "Progress" --content "done X" --
 
 # Comments — margin notes on a todo, scratchpad, or plan
 tally comments add <id> --body "hold off — waiting on the auth PR"
+tally comments add docs/plans/auth.md --body "skip step 3, it's done"   # target a plan by its path
 tally comments recent --since 2h            # newest-first across every target (default 24h)
 tally comments targets                      # which items carry notes, with a snippet
 ```
@@ -97,8 +111,13 @@ Scratchpad writes take an expected revision — `read` returns the current one, 
 pass it on the next write, and a mismatch means someone else edited it (re-read and
 retry). Prefer `append` / `append-section` / `edit` over rewriting the whole pad.
 
-The TUI drives the same store: filter with `/`, edit in place, `Y` to copy an
-item, `?` for help.
+The TUI carries the same work across tabs — todos, scratchpads, and a read-only
+**Plans** tab (`3`) that browses the plan dirs. Filter with `/`, edit in place,
+`Y` to copy an item, `?` for help.
+
+> Plans default to `docs/superpowers/{specs,plans}` and `docs/solutions`. To browse
+> other dirs, list them (one per line, relative to the repo root) in a `plan-paths`
+> file under your tally config dir (`$XDG_CONFIG_HOME/tally`, else `~/.config/tally`).
 
 ## For agents
 
