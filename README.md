@@ -55,7 +55,7 @@ One store, three thin adapters over it:
 
 | Adapter | For | Surface |
 |---------|-----|---------|
-| **CLI** | you, at the terminal | `tally todos …` / `tally scratchpads …` |
+| **CLI** | anything that can't speak MCP (scripts, hooks, other agents) | `tally todos …` / `tally scratchpads …` |
 | **MCP** | your agents | 38 `todo_*` / `scratchpad_*` / `comment_*` tools over stdio |
 | **TUI** | the herdr pane | `tally tui todos` / `tally tui scratchpads` |
 
