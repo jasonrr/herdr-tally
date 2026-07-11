@@ -96,6 +96,7 @@ actual=$(sha256_of "$tmpbin") || fallback "no sha-256 tool available"
 # Verified — install with a fresh inode.
 chmod +x "$tmpbin"
 mkdir -p "$(dirname "$out")"
+rm -f "$out"
 mv -f "$tmpbin" "$out" || fallback "could not install the verified binary to $out"
 echo "tally: installed prebuilt v$version ($triple), verified SHA-256 -> $out"
 exit 0
