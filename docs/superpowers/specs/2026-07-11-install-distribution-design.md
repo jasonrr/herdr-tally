@@ -6,7 +6,7 @@
 
 ## Goal / success criterion
 
-`herdr plugin install jasonrosoff/herdr-tally` on a clean machine (macOS or Linux,
+`herdr plugin install jasonrr/herdr-tally` on a clean machine (macOS or Linux,
 **no Rust toolchain**) yields, with **zero manual steps**:
 
 1. Working `Tally` / `Scratchpads` panes (prebuilt binary at `bin/tally`).
@@ -55,7 +55,7 @@
 - **`scripts/fetch-or-build.sh`** — the binary half of the `[[build]]` step:
   - Resolve target triple from `uname -s`/`-m`. Read declared version from `Cargo.toml`.
   - Download `tally-<triple>` + `SHA256SUMS` from
-    `https://github.com/jasonrosoff/herdr-tally/releases/download/v<version>/`,
+    `https://github.com/jasonrr/herdr-tally/releases/download/v<version>/`,
     verify SHA-256, `chmod +x`, `mv -f` into `bin/tally` (fresh inode).
   - **Version-only match** (not commit-exact): a checkout ahead of the released tag
     still uses the released, SHA-verified binary. A version with no release 404s → source.
