@@ -64,7 +64,43 @@ comments; plans are read straight from disk. Data lives under
 `~/.local/state/tally/`, keyed by project path — worktrees of the same repo share
 one store.
 
-## Setup
+## Install
+
+```bash
+herdr plugin install jasonrr/herdr-tally
+```
+
+This downloads a prebuilt `tally` binary for your platform (macOS arm64/x86_64,
+Linux x86_64), verifies its SHA-256, and — best-effort — registers the MCP server
+with Claude Code and installs the `tally` agent skill. No Rust toolchain is needed
+when a release exists for your platform; otherwise install falls back to building
+from source with `cargo` (install Rust from https://rustup.rs).
+
+**Platforms:** macOS and Linux. Windows is not yet supported.
+
+### If the automatic wiring is skipped
+
+The binary and panes always install. If `claude` wasn't on `PATH` at install time,
+finish the two best-effort steps manually — the installer prints the exact commands,
+or find the paths yourself:
+
+```bash
+# Register the MCP server:
+tally_bin=$(ls -d "$HOME"/.config/herdr/plugins/github/herdr-tally-*/bin/tally 2>/dev/null | tail -1)
+claude mcp add --scope user tally -- "$tally_bin" mcp
+
+# Install the agent skill:
+tally_root=$(ls -d "$HOME"/.config/herdr/plugins/github/herdr-tally-*/ 2>/dev/null | tail -1)
+mkdir -p ~/.claude/skills/tally && cp "${tally_root}SKILL.md" ~/.claude/skills/tally/SKILL.md
+```
+
+The plugin root is version-hashed; `tail -1` picks the newest if multiple versions
+are present. Prefer the exact command the installer printed over these fallbacks.
+
+## Install from source (development)
+
+For local development, or if you just want to build and link the binary by hand —
+`herdr plugin install` (above) runs this build step for end users automatically.
 
 macOS only for now (the panes hardcode Homebrew paths). You'll need Rust and
 herdr ≥ 0.7.0.
