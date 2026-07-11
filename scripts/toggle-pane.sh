@@ -13,7 +13,10 @@
 set -euo pipefail
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 kind="${1:?todos|scratchpads}"
-herdr="${HERDR_BIN_PATH:-/opt/homebrew/bin/herdr}"
+# herdr injects HERDR_BIN_PATH for plugin actions (used in the real path). When
+# unset (manual runs), resolve `herdr` from PATH before the macOS Homebrew default
+# so this works on Linux too.
+herdr="${HERDR_BIN_PATH:-$(command -v herdr || echo /opt/homebrew/bin/herdr)}"
 
 case "$kind" in
   todos) title="Tally" ;;
