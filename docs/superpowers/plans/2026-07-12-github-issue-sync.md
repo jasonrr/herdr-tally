@@ -1306,9 +1306,11 @@ fn run(args: &[&str], stdin: Option<&str>) -> Result<Vec<u8>> {
         cmd.stdin(Stdio::piped());
     }
     let mut child = cmd.spawn()?;
-    if let (Some(s), Some(mut w)) = (stdin, child.stdin.take()) {
-        w.write_all(s.as_bytes())?; // drop(w) closes the pipe
-    }
+    // Spawn the watchdog BEFORE writing stdin so the 30s ceiling also covers a
+    // stuck write, and so every path below reaches wait_with_output (which reaps
+    // the child). A `?` on the stdin write here would drop the child un-waited and
+    // leak a zombie when gh dies early (e.g. BrokenPipe on bad auth before it reads
+    // stdin).
     let pid = child.id() as libc::pid_t;
     let done = Arc::new(AtomicBool::new(false));
     let watch_done = done.clone();
@@ -1323,6 +1325,11 @@ fn run(args: &[&str], stdin: Option<&str>) -> Result<Vec<u8>> {
         }
         false
     });
+    if let (Some(s), Some(mut w)) = (stdin, child.stdin.take()) {
+        // Best-effort: if gh already closed stdin (erroring out), ignore the broken
+        // pipe — its exit status/stderr below is the real signal. drop(w) = EOF.
+        let _ = w.write_all(s.as_bytes());
+    }
     let out = child.wait_with_output()?;
     done.store(true, Ordering::Relaxed);
     let killed = watch.join().unwrap_or(false);
