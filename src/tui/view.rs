@@ -441,6 +441,7 @@ mod comment_tests {
             created: String::new(),
             kind: "note".into(),
             text: text.into(),
+            github_comment_id: 0,
         }
     }
 

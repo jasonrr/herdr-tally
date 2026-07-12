@@ -29,6 +29,22 @@ pub struct Lock {
     pub at: String,
 }
 
+/// Opt-in GitHub sync link for a single todo. Absent for unsynced todos.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GithubLink {
+    #[serde(rename = "repo")]
+    pub repo: String,
+    #[serde(rename = "number")]
+    pub number: i64,
+    #[serde(rename = "last_pushed")]
+    pub last_pushed: String,
+    #[serde(rename = "last_comment_pull")]
+    pub last_comment_pull: String,
+    #[serde(rename = "paused")]
+    pub paused: bool,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Todo {
@@ -60,6 +76,10 @@ pub struct Todo {
     pub created_by: String,
     #[serde(rename = "updated_by", default)]
     pub updated_by: String,
+    /// Opt-in GitHub sync link; None for unsynced todos so existing stores load
+    /// unchanged AND unsynced todos serialize byte-identical to today.
+    #[serde(rename = "github", default, skip_serializing_if = "Option::is_none")]
+    pub github: Option<GithubLink>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -234,6 +254,7 @@ impl Project {
             completed: None,
             created_by: self.actor.clone(),
             updated_by: self.actor.clone(),
+            github: None,
         };
         let cp = td.clone();
         self.mutate_todos(|tf| {
@@ -869,6 +890,35 @@ mod tests {
         assert_eq!(format_rfc3339(0), "1970-01-01T00:00:00Z");
         assert_eq!(format_rfc3339(951_782_400), "2000-02-29T00:00:00Z"); // leap day
         assert_eq!(format_rfc3339(1_700_000_000), "2023-11-14T22:13:20Z");
+    }
+
+    #[test]
+    fn test_unsynced_todo_serializes_without_github_key() {
+        let t = Todo::default();
+        let js = serde_json::to_string(&t).unwrap();
+        assert!(
+            !js.contains("github"),
+            "unsynced todo must omit github: {js}"
+        );
+    }
+
+    #[test]
+    fn test_todo_with_github_link_roundtrips() {
+        let mut t = Todo::default();
+        t.github = Some(GithubLink {
+            repo: "owner/name".into(),
+            number: 42,
+            last_pushed: "2026-07-12T00:00:00Z".into(),
+            last_comment_pull: "2026-07-12T00:00:00Z".into(),
+            paused: false,
+        });
+        let js = serde_json::to_string(&t).unwrap();
+        assert!(
+            js.contains(r#""github""#) && js.contains(r#""number":42"#),
+            "{js}"
+        );
+        let back: Todo = serde_json::from_str(&js).unwrap();
+        assert_eq!(back.github, t.github);
     }
 
     #[test]

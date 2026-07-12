@@ -34,6 +34,11 @@ pub struct Comment {
     pub kind: String,
     #[serde(rename = "text")]
     pub text: String,
+    /// GitHub echo-prevention. 0 = none. On a pulled comment, the GH comment id
+    /// (never re-imported, never pushed back). On a pushed comment, the id of the
+    /// GH comment it became. Absent (skipped) on non-GitHub comments.
+    #[serde(rename = "github_comment_id", default, skip_serializing_if = "is_zero")]
+    pub github_comment_id: i64,
 }
 
 // On-disk shape is just {"comments":[…]} — no revision counter: comment ops are
@@ -59,6 +64,10 @@ pub struct CommentSummary {
 /// are the same target. (Todo/pad ids are unaffected.)
 fn norm_target(t: &str) -> &str {
     t.strip_prefix("./").unwrap_or(t)
+}
+
+fn is_zero(n: &i64) -> bool {
+    *n == 0
 }
 
 impl Project {
@@ -101,6 +110,7 @@ impl Project {
             created: now(),
             kind: kind.to_string(),
             text: text.to_string(),
+            github_comment_id: 0,
         };
         let cp = c.clone();
         self.mutate_comments(|cf| {
@@ -447,6 +457,7 @@ mod tests {
             created: "2000-01-01T00:00:00Z".into(),
             kind: "note".into(),
             text: "old note".into(),
+            github_comment_id: 0,
         });
         cf.comments.push(Comment {
             id: "c_ev".into(),
@@ -456,6 +467,7 @@ mod tests {
             created: "2026-07-10T12:00:00Z".into(),
             kind: "event".into(),
             text: "marked done".into(),
+            github_comment_id: 0,
         });
         tp.save_comments(&cf).unwrap();
 
@@ -523,6 +535,7 @@ mod tests {
                 created: "2026-07-10T12:00:00Z".into(),
                 kind: "note".into(),
                 text: text.into(),
+                github_comment_id: 0,
             });
         }
         tp.save_comments(&cf).unwrap();
@@ -530,6 +543,26 @@ mod tests {
         let r = tp.recent_comments("", None, false).unwrap();
         assert_eq!(r[0].text, "second_appended");
         assert_eq!(r[1].text, "first_appended");
+    }
+
+    #[test]
+    fn test_non_github_comment_omits_id_key() {
+        let c = Comment::default();
+        let js = serde_json::to_string(&c).unwrap();
+        assert!(
+            !js.contains("github_comment_id"),
+            "non-GH comment must omit the field: {js}"
+        );
+    }
+
+    #[test]
+    fn test_github_comment_id_roundtrips() {
+        let mut c = Comment::default();
+        c.github_comment_id = 12345;
+        let js = serde_json::to_string(&c).unwrap();
+        assert!(js.contains(r#""github_comment_id":12345"#), "{js}");
+        let back: Comment = serde_json::from_str(&js).unwrap();
+        assert_eq!(back.github_comment_id, 12345);
     }
 
     #[test]
@@ -546,6 +579,7 @@ mod tests {
                 created: "2026-07-10T12:00:00Z".into(),
                 kind: "note".into(),
                 text: "n".into(),
+                github_comment_id: 0,
             });
         }
         tp.save_comments(&cf).unwrap();
