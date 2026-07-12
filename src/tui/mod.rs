@@ -10,6 +10,8 @@ mod view;
 
 use std::io::stdout;
 use std::process::ExitCode;
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{
@@ -21,7 +23,7 @@ use crossterm::execute;
 use crossterm::terminal::supports_keyboard_enhancement;
 
 use crate::cli::{parse, project_opt};
-use crate::store::resolve_project;
+use crate::store::{GhCli, resolve_project, sync_project};
 
 use app::{App, Tab};
 
@@ -61,7 +63,9 @@ pub fn run(args: &[String]) -> ExitCode {
     // agent/env default.
     p.actor = "you".to_string();
 
+    let project_path = p.path.to_string_lossy().into_owned();
     let mut a = App::new(p, initial);
+    a.sync_tx = Some(spawn_sync_worker(project_path, a.sync_status.clone()));
     a.reload();
     let mut terminal = ratatui::init(); // altscreen + raw mode + panic hook
     let _ = execute!(stdout(), EnableMouseCapture, EnableBracketedPaste);
@@ -89,6 +93,35 @@ pub fn run(args: &[String]) -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// Background reconcile loop: every 60s (or on nudge) run one sync pass and
+/// publish a one-line status. Builds its own Project from the path so the store
+/// flock is the only shared state (safe cross-thread). Errors degrade to status.
+fn spawn_sync_worker(project_path: String, status: Arc<Mutex<String>>) -> mpsc::Sender<()> {
+    let (tx, rx) = mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        loop {
+            match resolve_project(Some(&project_path)) {
+                Ok(mut p) => {
+                    let rep = sync_project(&mut p, &GhCli);
+                    if let Ok(mut s) = status.lock() {
+                        *s = app::summarize(&rep);
+                    }
+                }
+                Err(e) => {
+                    if let Ok(mut s) = status.lock() {
+                        *s = format!("sync: {e}");
+                    }
+                }
+            }
+            match rx.recv_timeout(Duration::from_secs(60)) {
+                Ok(()) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+    });
+    tx
 }
 
 fn event_loop(terminal: &mut ratatui::DefaultTerminal, a: &mut App) -> std::io::Result<()> {

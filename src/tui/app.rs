@@ -132,6 +132,11 @@ pub struct App {
 
     /// Hit-test regions recorded by the last draw (view.rs).
     pub hits: Hits,
+
+    /// Shared with the background sync worker; read by the footer.
+    pub sync_status: std::sync::Arc<std::sync::Mutex<String>>,
+    /// Nudge channel to wake the worker after a local mutation. None in tests.
+    pub sync_tx: Option<std::sync::mpsc::Sender<()>>,
 }
 
 /// low→medium→high→low; anything unrecognized falls back to medium.
@@ -142,6 +147,25 @@ pub fn next_priority(cur: &str) -> &'static str {
         "high" => "low",
         _ => "medium",
     }
+}
+
+/// One-line sync status for the footer.
+pub(super) fn summarize(rep: &crate::store::SyncReport) -> String {
+    // Nothing linked: sync gated out before touching gh (gh_available false, no
+    // error). Keep the footer quiet rather than alarming every non-user with
+    // "gh unavailable" every 60s.
+    if !rep.gh_available && rep.errors.is_empty() {
+        return String::new();
+    }
+    if !rep.gh_available {
+        return "⚠ gh unavailable".to_string();
+    }
+    let errs = if rep.errors.is_empty() {
+        String::new()
+    } else {
+        format!(" · {} err", rep.errors.len())
+    };
+    format!("↕ {} synced{errs}", rep.checked)
 }
 
 fn new_editor(text: &str, single_line: bool) -> EditorState {
@@ -233,6 +257,8 @@ impl App {
             comment_ed: new_editor("", false),
             comment_handler: EditorEventHandler::emacs_mode(),
             hits: Hits::default(),
+            sync_status: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
+            sync_tx: None,
         };
         app.load_ui_state();
         app
@@ -565,6 +591,7 @@ impl App {
                 self.cycle_priority();
                 self.reload();
             }
+            KeyCode::Char('G') if self.tab == Tab::Todos => self.toggle_github(),
             _ => {}
         }
     }
@@ -588,6 +615,7 @@ impl App {
                 self.cycle_priority();
                 self.reload();
             }
+            KeyCode::Char('G') if self.tab == Tab::Todos => self.toggle_github(),
             KeyCode::Char('e') | KeyCode::Enter if self.tab != Tab::Plans => self.begin_edit(),
             KeyCode::Char('C') => self.begin_comment(),
             KeyCode::Char('y') => self.yank(),
@@ -925,8 +953,9 @@ impl App {
         } else {
             self.p.complete_todo(&id, false)
         };
-        if let Err(e) = r {
-            self.status = format!("status change failed: {e}");
+        match r {
+            Ok(_) => self.nudge_sync(),
+            Err(e) => self.status = format!("status change failed: {e}"),
         }
     }
 
@@ -938,14 +967,51 @@ impl App {
             };
             (t.id.clone(), next_priority(&t.priority).to_string())
         };
-        if let Err(e) = self.p.update_todo(
+        match self.p.update_todo(
             &id,
             TodoUpdate {
                 priority: Some(next),
                 ..TodoUpdate::default()
             },
         ) {
-            self.status = format!("priority change failed: {e}");
+            Ok(_) => self.nudge_sync(),
+            Err(e) => self.status = format!("priority change failed: {e}"),
+        }
+    }
+
+    /// Wake the sync worker now (best-effort; ignored if the channel is gone).
+    fn nudge_sync(&self) {
+        if let Some(tx) = &self.sync_tx {
+            let _ = tx.send(());
+        }
+    }
+
+    /// 'G' on the selected/open todo: flip GitHub sync on/off. Off = pause (keeps
+    /// the link). On a synced-but-paused todo, re-enables. Todos tab only.
+    fn toggle_github(&mut self) {
+        if self.tab != Tab::Todos {
+            return;
+        }
+        let Some(id) = self.selected_id() else {
+            return;
+        };
+        let currently_on = self
+            .todos
+            .iter()
+            .find(|t| t.id == id)
+            .and_then(|t| t.github.as_ref())
+            .is_some_and(|l| !l.paused);
+        match self.p.set_github(&id, !currently_on) {
+            Ok(_) => {
+                self.status = if currently_on {
+                    "GitHub sync paused".to_string()
+                } else {
+                    "GitHub sync on".to_string()
+                };
+                self.reload();
+                self.nudge_sync();
+            }
+            Err(e) => self.status = format!("sync toggle failed: {e}"),
         }
     }
 
@@ -1157,6 +1223,9 @@ impl App {
             self.rebuild_read_text();
         }
         self.reload();
+        if self.tab == Tab::Todos {
+            self.nudge_sync();
+        }
     }
 
     /// Persists a brand-new item created through the unified editor. An empty
@@ -1316,6 +1385,33 @@ mod tests {
         assert_eq!(next_priority("medium"), "high");
         assert_eq!(next_priority("high"), "low");
         assert_eq!(next_priority("bogus"), "medium"); // unrecognized falls back
+    }
+
+    #[test]
+    fn test_summarize() {
+        // Nothing to sync (no links) → quiet footer.
+        let rep = crate::store::SyncReport::default();
+        assert!(summarize(&rep).is_empty(), "quiet: {:?}", summarize(&rep));
+        // gh genuinely unavailable: there was work, auth failed → error recorded.
+        let mut rep = crate::store::SyncReport::default();
+        rep.errors
+            .push("gh unavailable or not authenticated".into());
+        assert!(
+            summarize(&rep).contains("gh"),
+            "unavailable: {}",
+            summarize(&rep)
+        );
+        // Live and synced.
+        let mut rep = crate::store::SyncReport::default();
+        rep.gh_available = true;
+        rep.checked = 3;
+        assert!(summarize(&rep).contains('3'));
+        rep.errors.push("t_x: boom".into());
+        assert!(
+            summarize(&rep).contains("1"),
+            "should note error count: {}",
+            summarize(&rep)
+        );
     }
 
     #[test]

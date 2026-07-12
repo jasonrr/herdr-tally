@@ -743,7 +743,22 @@ fn draw_comment_input(app: &mut App, f: &mut Frame, area: Rect) {
 }
 
 fn draw_footer(app: &App, f: &mut Frame, area: Rect) {
-    let mut lines = vec![Line::from(footer(app)).dim()];
+    let hints = footer(app);
+    let sync = app
+        .sync_status
+        .lock()
+        .map(|s| s.clone())
+        .unwrap_or_default();
+    let first = if sync.is_empty() {
+        Line::from(hints).dim()
+    } else {
+        Line::from(vec![
+            Span::from(hints).dim(),
+            Span::from("    "),
+            Span::from(sync).dim(),
+        ])
+    };
+    let mut lines = vec![first];
     if !app.status.is_empty() {
         lines.push(Line::from(app.status.clone()));
     }
@@ -754,12 +769,14 @@ fn footer(app: &App) -> &'static str {
     match app.mode {
         // Top ~6 commands only; `?` opens the full list (draw_help).
         Mode::List => match app.tab {
-            Tab::Todos => "↑↓ · enter · n new · space done · e edit · d del · ? help",
+            Tab::Todos => "↑↓ · enter · n new · space done · G github · e edit · d del · ? help",
             Tab::Scratchpads => "↑↓ · enter · n new · e edit · d del · ? help",
             Tab::Plans => "↑↓ · enter · / filter · r · ? help",
         },
         Mode::Read => match app.tab {
-            Tab::Todos => "space done · p prio · e edit · C comment · y id · R raw · esc back",
+            Tab::Todos => {
+                "space done · p prio · G github · e edit · C comment · y id · R raw · esc back"
+            }
             Tab::Scratchpads => "e edit · C comment · y id · Y copy · R raw · esc back",
             Tab::Plans => "C comment · y id · Y copy · R raw · esc back",
         },
@@ -786,6 +803,7 @@ const HELP_ROWS: &[(&str, &str)] = &[
     ("e", "edit"),
     ("space", "toggle done (todos)"),
     ("p", "cycle priority (todos)"),
+    ("G", "toggle GitHub sync (todos)"),
     ("c", "hide / show done (todos)"),
     ("d", "delete"),
     ("/", "filter (plans)"),
