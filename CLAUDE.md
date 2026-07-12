@@ -46,12 +46,21 @@ store methods. Logic and tests live in store. If CLI and MCP disagree, that's a 
 
 ```bash
 cargo build --release && mkdir -p bin && rm -f bin/tally && cp target/release/tally bin/tally
+pkill -f 'bin/tally tui'; pgrep -fl 'bin/tally mcp'  # kill stale panes; RECONNECT any mcp listed
 cargo test
 cargo clippy && cargo fmt --check
 ```
 
 `herdr plugin link` does NOT run the manifest `[[build]]` step — build by hand after
 linking. Panes/scripts expect the binary at `bin/tally` exactly.
+
+**Line 2 is not optional.** The rebuild above swaps `bin/tally` to a fresh inode, but
+already-running TUI panes and MCP servers keep executing the OLD image — and a
+whole-file store write from stale code silently drops fields it doesn't know (this is
+how a linked todo's `github` block once vanished). `install.sh` does this on the
+packaged install path; the dev loop has no such hook, so kill stale panes yourself and
+reconnect any MCP session `pgrep` lists (don't `pkill` those — they're stdio children of
+live agent sessions). Panes built after that fix also nag in their own footer.
 
 **`rm -f` before the `cp` is load-bearing on macOS.** Overwriting the signed
 Mach-O at `bin/tally` in place leaves a stale kernel code-signature cache,
