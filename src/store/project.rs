@@ -131,7 +131,6 @@ impl Project {
     /// The GitHub "owner/name" from this project's `origin` remote, or None
     /// (no remote / not parseable). Uses the same `git` helper as project root.
     // Unused outside tests until a later task wires the sync engine to it.
-    #[allow(dead_code)]
     pub(crate) fn origin_repo(&self) -> Option<String> {
         let url = git(&self.path, &["remote", "get-url", "origin"])?;
         super::sync::parse_repo(&url)
