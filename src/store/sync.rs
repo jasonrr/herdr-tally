@@ -4,7 +4,6 @@
 /// Parse a git remote URL to "owner/name". Handles scp-style (`git@host:o/n.git`),
 /// ssh (`ssh://git@host/o/n.git`), and https (`https://host/o/n[.git]`). None on
 /// anything that doesn't yield two path segments.
-// Unused outside tests until a later task wires the sync engine to it.
 pub(crate) fn parse_repo(url: &str) -> Option<String> {
     let u = url.trim();
     let path = if let Some(rest) = u.strip_prefix("git@") {
