@@ -242,17 +242,32 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
                     ""
                 };
                 let n = app.comment_counts.get(&t.id).copied().unwrap_or(0);
-                let badge = if n > 0 {
-                    format!(" 💬{n}")
+                // Priority to a single letter (H/M/L) — reclaims width for narrow panes.
+                let pri = t
+                    .priority
+                    .chars()
+                    .next()
+                    .map(|c| c.to_ascii_uppercase())
+                    .unwrap_or('?');
+                let left = format!("{glyph} [{pri}] {}{blocked}", t.title);
+                // Indicators pinned to the right edge (list order, time last) so a long
+                // title truncates instead of hiding them: comments, github link, lock,
+                // relative time.
+                let cmt = if n > 0 {
+                    format!("💬{n}")
                 } else {
                     String::new()
                 };
-                let left = format!("{glyph} [{}] {}{blocked}{badge}", t.priority, t.title);
-                let rel = crate::tui::time::humanize_since(&t.updated, now);
-                let right = match &t.lock {
-                    Some(l) if !l.owner.is_empty() => format!("🔒 {} {}", l.owner, rel),
-                    _ => rel,
+                let gh = match &t.github {
+                    Some(l) if !l.paused => "⇅".to_string(),
+                    _ => String::new(),
                 };
+                let lock = match &t.lock {
+                    Some(l) if !l.owner.is_empty() => format!("🔒 {}", l.owner),
+                    _ => String::new(),
+                };
+                let rel = crate::tui::time::humanize_since(&t.updated, now);
+                let right = cluster(&[cmt, gh, lock, rel]);
                 rows.push(right_aligned_row(
                     left,
                     right,
@@ -277,14 +292,14 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
             for (i, s) in vis.iter().enumerate() {
                 let rel = crate::tui::time::humanize_since(&s.updated, now);
                 let n = app.comment_counts.get(&s.id).copied().unwrap_or(0);
-                let badge = if n > 0 {
-                    format!(" 💬{n}")
+                let cmt = if n > 0 {
+                    format!("💬{n}")
                 } else {
                     String::new()
                 };
                 rows.push(right_aligned_row(
-                    format!("• {}{badge}", s.title),
-                    rel,
+                    format!("• {}", s.title),
+                    cluster(&[cmt, rel]),
                     list_area.width as usize,
                     i == cursor,
                     cursor_style,
@@ -304,13 +319,16 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
             }
             for (i, d) in vis.iter().enumerate() {
                 let n = app.comment_counts.get(&d.rel_path).copied().unwrap_or(0);
-                let badge = if n > 0 {
-                    format!(" 💬{n}")
+                // Plans have no time column; empty `right` returns the row unchanged.
+                let cmt = if n > 0 {
+                    format!("💬{n}")
                 } else {
                     String::new()
                 };
-                rows.push(styled_row(
-                    format!("• {}{badge}", d.rel_path),
+                rows.push(right_aligned_row(
+                    format!("• {}", d.rel_path),
+                    cmt,
+                    list_area.width as usize,
                     i == cursor,
                     cursor_style,
                 ));
@@ -492,15 +510,32 @@ mod comment_tests {
 /// Places `right` at the right edge of `width` columns (char-counted, matching
 /// the rest of this file's column math), truncating `left` with `…` when the
 /// two would overlap. Empty `right` returns `left` unchanged.
+/// Display width (columns), so wide glyphs (💬 🔒 emoji) are measured as 2 — a
+/// char count would under-measure and shove the right cluster past the edge.
+fn dwidth(s: &str) -> usize {
+    Line::from(s.to_string()).width()
+}
+
+/// Space-join the non-empty indicator segments, in the caller's left→right order
+/// (time last). Empty segments drop out so gaps don't accumulate.
+fn cluster(parts: &[String]) -> String {
+    parts
+        .iter()
+        .filter(|p| !p.is_empty())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 fn pad_right_aligned(left: String, right: &str, width: usize) -> String {
     if right.is_empty() {
         return left;
     }
-    let rw = right.chars().count();
-    let lw = left.chars().count();
+    let rw = dwidth(right);
+    let lw = dwidth(&left);
     let avail = width.saturating_sub(rw + 1); // room for right + a one-space gap
     if lw <= avail {
-        let pad = width - rw - lw;
+        let pad = width.saturating_sub(rw + lw); // saturating: a too-narrow pane can't underflow
         format!("{left}{}{right}", " ".repeat(pad))
     } else {
         // truncate left, leaving room for the ellipsis + gap + right
@@ -1104,5 +1139,31 @@ mod tests {
             pad_right_aligned("• spec.md".to_string(), "", 12),
             "• spec.md"
         );
+    }
+
+    #[test]
+    fn cluster_joins_nonempty_only() {
+        assert_eq!(
+            cluster(&["💬2".into(), String::new(), "3h".into()]),
+            "💬2 3h"
+        );
+        assert_eq!(cluster(&[String::new(), String::new()]), "");
+    }
+
+    #[test]
+    fn pad_measures_emoji_as_two_columns() {
+        // 💬 is 2 columns: the row's DISPLAY width must equal the target and the
+        // right cluster stays pinned to the edge (a char count would over-pad).
+        let got = pad_right_aligned("todo".to_string(), "💬2 3h", 14);
+        assert!(got.ends_with("💬2 3h"), "{got}");
+        assert_eq!(dwidth(&got), 14, "display width off: {got}");
+    }
+
+    #[test]
+    fn pad_narrow_pane_keeps_right_no_panic() {
+        // width smaller than the right cluster: must not underflow/panic and must
+        // still emit the right cluster (left collapses to the ellipsis).
+        let got = pad_right_aligned("a long todo title".to_string(), "💬9 5m", 6);
+        assert!(got.contains("💬9 5m"), "{got}");
     }
 }
