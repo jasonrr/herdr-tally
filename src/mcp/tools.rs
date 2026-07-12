@@ -231,7 +231,7 @@ fn registry() -> Vec<Tool> {
                 let (s, text) = p.read_scratchpad(&a.id, or_default(&a.mode, "full"), &a.section_heading, a.offset, a.limit)?;
                 Ok(json!({"scratchpad": serde_json::to_value(s)?, "text": text}))
             } },
-        Tool { name: "scratchpad_write", desc: "Create a scratchpad, or replace an existing one's content/tags at a revision.",
+        Tool { name: "scratchpad_write", desc: "Create a scratchpad, or replace an existing one's content/tags at a revision. A leading `# ` H1 becomes the title.",
             schema: obj(req(&["content"]), json!({"id": prop("string", "omit to create"), "content": prop("string", ""), "tags": arr(""), "expected_revision": prop("integer", "required when id given")})),
             run: |p, a| {
                 if a.id.is_empty() {
@@ -274,7 +274,7 @@ fn registry() -> Vec<Tool> {
         Tool { name: "scratchpad_append_section", desc: "Append under an existing heading.",
             schema: obj(req(&["id", "heading", "content"]), json!({"id": prop("string", ""), "heading": prop("string", ""), "content": prop("string", ""), "expected_revision": prop("integer", "")})),
             run: |p, a| val(p.append_section(&a.id, &a.heading, &a.content, a.rev())?) },
-        Tool { name: "scratchpad_edit", desc: "Replace a section or a line range.",
+        Tool { name: "scratchpad_edit", desc: "Replace a section or a line range. Section edits preserve the heading unless the replacement starts with one.",
             schema: obj(req(&["id", "target", "content", "expected_revision"]), json!({"id": prop("string", ""), "target": prop("object", r#"{"type":"section","section_heading":".."} or {"type":"line_range","offset":0,"limit":1}"#), "content": prop("string", ""), "expected_revision": prop("integer", "")})),
             run: |p, a| {
                 require_revision(a, "scratchpad_edit")?;
