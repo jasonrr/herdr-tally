@@ -138,6 +138,17 @@ pub(crate) fn run(args: &[String], store_root: Option<&Path>, out: &mut dyn Writ
                 Ok(b) => b,
                 Err(e) => return fail(&e.to_string()),
             };
+            // Validate --github up front so a bad value doesn't half-apply field edits.
+            let github_on = if p.was_set("github") {
+                match github.as_str() {
+                    "on" => Some(true),
+                    "off" => Some(false),
+                    other => return fail(&format!("--github must be on|off, got {other:?}")),
+                }
+            } else {
+                None
+            };
+
             let mut u = TodoUpdate::default();
             if p.was_set("title") {
                 u.title = Some(title);
@@ -171,12 +182,7 @@ pub(crate) fn run(args: &[String], store_root: Option<&Path>, out: &mut dyn Writ
             } else {
                 None
             };
-            if p.was_set("github") {
-                let on = match github.as_str() {
-                    "on" => true,
-                    "off" => false,
-                    other => return fail(&format!("--github must be on|off, got {other:?}")),
-                };
+            if let Some(on) = github_on {
                 match proj.set_github(&id, on) {
                     Ok(t) => td = Some(t),
                     Err(e) => return fail(&e.to_string()),

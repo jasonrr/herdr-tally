@@ -150,6 +150,18 @@ fn registry() -> Vec<Tool> {
         Tool { name: "todo_update", desc: "Update provided todo fields; omitted fields preserved.",
             schema: obj(req(&["id"]), json!({"id": prop("string", ""), "title": prop("string", ""), "body": prop("string", ""), "priority": prop("string", ""), "status": prop("string", ""), "tags": arr(""), "github": prop("string", "on|off (opt-in sync); empty = unchanged")})),
             run: |p, a| {
+                // Validate github up front so a bad value doesn't half-apply field edits.
+                // Empty string = unchanged (consistent with the field quirk below).
+                let github_on = if !a.github.is_empty() {
+                    match a.github.as_str() {
+                        "on" => Some(true),
+                        "off" => Some(false),
+                        other => return Err(Error::Other(format!("github must be on|off, got {other:?}"))),
+                    }
+                } else {
+                    None
+                };
+
                 let mut u = TodoUpdate::default();
                 // Deliberate quirk: empty string means "unchanged" (can't clear a
                 // field to "" via MCP). Preserve exactly — see CLAUDE.md.
@@ -161,13 +173,7 @@ fn registry() -> Vec<Tool> {
                 let has_fields = u.title.is_some() || u.body.is_some() || u.priority.is_some()
                     || u.status.is_some() || u.tags.is_some();
                 let mut td = if has_fields { Some(p.update_todo(&a.id, u)?) } else { None };
-                // Empty string = unchanged (consistent with the field quirk above).
-                if !a.github.is_empty() {
-                    let on = match a.github.as_str() {
-                        "on" => true,
-                        "off" => false,
-                        other => return Err(Error::Other(format!("github must be on|off, got {other:?}"))),
-                    };
+                if let Some(on) = github_on {
                     td = Some(p.set_github(&a.id, on)?);
                 }
                 match td {

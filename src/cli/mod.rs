@@ -368,6 +368,44 @@ mod tests {
 
         // bogus value is rejected
         assert_ne!(cli.todos(&["update", &id, "--github", "maybe"]).0, 0);
+
+        // a bad --github value must not partially apply a field edit alongside it
+        assert_ne!(
+            cli.todos(&[
+                "update",
+                &id,
+                "--title",
+                "Should not stick",
+                "--github",
+                "bogus"
+            ])
+            .0,
+            0
+        );
+        let (_, out) = cli.todos(&["get", &id, "--json"]);
+        let got: crate::store::Todo = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            got.title, "Sync me",
+            "title must not change on invalid github value"
+        );
+    }
+
+    #[test]
+    fn todos_fieldless_update_does_not_bump_updated() {
+        let cli = Cli::new();
+        cli.todos(&["create", "--title", "Keep me"]);
+        let (_, out) = cli.todos(&["list", "--json"]);
+        let listed: TodoList = serde_json::from_str(&out).unwrap();
+        let id = listed.todos[0].id.clone();
+        let (_, before) = cli.todos(&["get", &id, "--json"]);
+        let before_todo: crate::store::Todo = serde_json::from_str(&before).unwrap();
+        assert_eq!(cli.todos(&["update", &id]).0, 0);
+        let (_, after) = cli.todos(&["get", &id, "--json"]);
+        let after_todo: crate::store::Todo = serde_json::from_str(&after).unwrap();
+        assert_eq!(
+            after_todo.updated, before_todo.updated,
+            "fieldless update must not bump updated"
+        );
     }
 
     #[test]
