@@ -121,10 +121,390 @@ pub(crate) fn plan_actions(
     acts
 }
 
+use super::errors::Result;
+use super::todos::now;
+use super::{Project, TodoFilter};
+
+pub trait Gh {
+    fn auth_ok(&self) -> bool;
+    fn create_issue(&self, repo: &str, title: &str, body: &str) -> Result<i64>;
+    fn edit_issue(&self, repo: &str, number: i64, title: &str, body: &str) -> Result<()>;
+    fn close_issue(&self, repo: &str, number: i64) -> Result<()>;
+    fn reopen_issue(&self, repo: &str, number: i64) -> Result<()>;
+    fn view_issue(&self, repo: &str, number: i64) -> Result<IssueSnapshot>;
+    fn create_comment(&self, repo: &str, number: i64, body: &str) -> Result<i64>;
+}
+
+#[derive(Debug, Default, serde::Serialize)]
+pub struct SyncReport {
+    pub gh_available: bool,
+    pub checked: usize,
+    pub created: usize,
+    pub pushed: usize,
+    pub state_changes: usize,
+    pub pulled_comments: usize,
+    pub pushed_comments: usize,
+    pub errors: Vec<String>,
+}
+
+/// `gh:<login>`, or bare `gh` when the login is unknown.
+fn gh_actor(login: &str) -> String {
+    if login.is_empty() {
+        "gh".to_string()
+    } else {
+        format!("gh:{login}")
+    }
+}
+
+/// Run `f` with the project's actor temporarily set to `actor`, so a store
+/// mutation is attributed to (e.g.) `gh:octocat` and restored afterward.
+fn with_actor<T>(p: &mut Project, actor: &str, f: impl FnOnce(&Project) -> Result<T>) -> Result<T> {
+    let saved = std::mem::replace(&mut p.actor, actor.to_string());
+    let r = f(p);
+    p.actor = saved;
+    r
+}
+
+/// One reconcile pass over every synced, un-paused todo. Best-effort: a per-todo
+/// gh/network failure is recorded and skipped; the next tick retries.
+pub fn sync_project(p: &mut Project, gh: &dyn Gh) -> SyncReport {
+    let mut rep = SyncReport::default();
+    // List first, then gate on active links BEFORE shelling out to `gh auth
+    // status`. Most tally users have no synced todos; they must not pay a `gh`
+    // subprocess every 60s (TUI worker) / every nudge just to learn there's
+    // nothing to do. gh_available stays false in that case → "nothing to sync".
+    let todos = match p.list_todos(TodoFilter::default()) {
+        Ok(t) => t,
+        Err(e) => {
+            rep.errors.push(format!("list todos: {e}"));
+            return rep;
+        }
+    };
+    let active: Vec<Todo> = todos
+        .into_iter()
+        .filter(|t| t.github.as_ref().is_some_and(|l| !l.paused))
+        .collect();
+    if active.is_empty() {
+        return rep; // nothing linked; don't touch gh
+    }
+    if !gh.auth_ok() {
+        rep.errors
+            .push("gh unavailable or not authenticated".to_string());
+        return rep;
+    }
+    rep.gh_available = true;
+    for t in active {
+        let link = t.github.clone().expect("filtered to Some above");
+        rep.checked += 1;
+        if let Err(e) = sync_one(p, gh, &t, link, &mut rep) {
+            rep.errors.push(format!("{}: {e}", t.id));
+        }
+    }
+    rep
+}
+
+fn sync_one(
+    p: &mut Project,
+    gh: &dyn Gh,
+    todo: &Todo,
+    mut link: GithubLink,
+    rep: &mut SyncReport,
+) -> Result<()> {
+    // Capture the pass watermark BEFORE any gh read. A user edit or a fresh GH
+    // comment that lands DURING this pass then has updated/created > pass_start,
+    // so stamping pass_start (not a post-pass now()) never buries it — next tick's
+    // `updated > last_pushed` / `created >= last_comment_pull` still fires. Using a
+    // post-pass now() would silently skip anything that arrived mid-pass.
+    let pass_start = now();
+
+    // Create: no issue yet. One pass creates it; the next reconciles state/comments.
+    if link.number == 0 {
+        link.number = gh.create_issue(&link.repo, &todo.title, &todo.body)?;
+        link.last_pushed = pass_start;
+        p.update_github_link(&todo.id, link)?;
+        rep.created += 1;
+        return Ok(());
+    }
+
+    let snap = gh.view_issue(&link.repo, link.number)?;
+    let comments = p.list_comments(&todo.id)?;
+    let actions = plan_actions(todo, &link, &comments, &snap);
+
+    let mut pushed_state = false; // we pushed to GH (edit/close/reopen)
+    let mut pulled_state = false; // GH won: we bumped the todo (complete/reopen)
+    for act in actions {
+        match act {
+            Action::EditIssue => {
+                gh.edit_issue(&link.repo, link.number, &todo.title, &todo.body)?;
+                pushed_state = true;
+                rep.pushed += 1;
+            }
+            Action::CloseIssue => {
+                gh.close_issue(&link.repo, link.number)?;
+                pushed_state = true;
+                rep.state_changes += 1;
+            }
+            Action::ReopenIssue => {
+                gh.reopen_issue(&link.repo, link.number)?;
+                pushed_state = true;
+                rep.state_changes += 1;
+            }
+            Action::CompleteTodo { by } => {
+                let actor = gh_actor(&by);
+                let id = todo.id.clone();
+                with_actor(p, &actor, |p| p.complete_todo(&id, false))?;
+                pulled_state = true;
+                rep.state_changes += 1;
+            }
+            Action::ReopenTodo { by } => {
+                let actor = gh_actor(&by);
+                let id = todo.id.clone();
+                with_actor(p, &actor, |p| p.incomplete_todo(&id, false))?;
+                pulled_state = true;
+                rep.state_changes += 1;
+            }
+            Action::ImportComment(gc) => {
+                p.import_github_comment(
+                    &todo.id,
+                    &gh_actor(&gc.author),
+                    &gc.created,
+                    gc.id,
+                    &gc.body,
+                )?;
+                rep.pulled_comments += 1;
+            }
+            Action::PushComment { comment_id } => {
+                if let Some(c) = comments.iter().find(|c| c.id == comment_id) {
+                    let gid = gh.create_comment(&link.repo, link.number, &c.text)?;
+                    p.set_comment_github_id(&comment_id, gid)?;
+                    rep.pushed_comments += 1;
+                }
+            }
+        }
+    }
+
+    // last_pushed policy (push and pull state changes are mutually exclusive —
+    // plan_actions takes the tally-wins OR the GH-wins branch, never both):
+    //  - pulled a close/reopen → complete_todo/incomplete_todo just bumped the
+    //    todo's `updated` to the pull moment. Set last_pushed to that RE-READ
+    //    value so the pull-bump doesn't read as a user edit next tick (a fresh
+    //    now() would be < updated on a fast pass and re-trigger a spurious push).
+    //  - pushed a state change → advance to pass_start (a mid-pass user edit has
+    //    updated > pass_start, so it still pushes next tick).
+    if pulled_state {
+        link.last_pushed = p.get_todo(&todo.id)?.updated;
+    } else if pushed_state {
+        link.last_pushed = pass_start.clone();
+    }
+    // We've now seen every GH comment created up to pass_start; the id-known set
+    // guards echoes/dups, so an inclusive pass_start bound loses nothing.
+    link.last_comment_pull = pass_start;
+    p.update_github_link(&todo.id, link)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::testutil::new_project;
     use crate::store::{Comment, GithubLink, Todo};
+    use std::cell::RefCell;
+
+    /// A scripted GH boundary. Records mutating calls; serves one snapshot.
+    struct FakeGh {
+        snapshot: IssueSnapshot,
+        next_issue: i64,
+        next_comment: i64,
+        edits: RefCell<Vec<String>>,
+    }
+    impl FakeGh {
+        fn new(snapshot: IssueSnapshot) -> Self {
+            FakeGh {
+                snapshot,
+                next_issue: 7,
+                next_comment: 500,
+                edits: RefCell::new(vec![]),
+            }
+        }
+    }
+    impl Gh for FakeGh {
+        fn auth_ok(&self) -> bool {
+            true
+        }
+        fn create_issue(&self, _r: &str, _t: &str, _b: &str) -> crate::store::Result<i64> {
+            self.edits.borrow_mut().push("create".into());
+            Ok(self.next_issue)
+        }
+        fn edit_issue(&self, _r: &str, n: i64, _t: &str, _b: &str) -> crate::store::Result<()> {
+            self.edits.borrow_mut().push(format!("edit {n}"));
+            Ok(())
+        }
+        fn close_issue(&self, _r: &str, n: i64) -> crate::store::Result<()> {
+            self.edits.borrow_mut().push(format!("close {n}"));
+            Ok(())
+        }
+        fn reopen_issue(&self, _r: &str, n: i64) -> crate::store::Result<()> {
+            self.edits.borrow_mut().push(format!("reopen {n}"));
+            Ok(())
+        }
+        fn view_issue(&self, _r: &str, _n: i64) -> crate::store::Result<IssueSnapshot> {
+            Ok(self.snapshot.clone())
+        }
+        fn create_comment(&self, _r: &str, _n: i64, _b: &str) -> crate::store::Result<i64> {
+            self.edits.borrow_mut().push("comment".into());
+            Ok(self.next_comment)
+        }
+    }
+
+    fn link_todo(p: &crate::store::Project) -> String {
+        // origin so set_github can create a link
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&p.path)
+            .args(["remote", "add", "origin", "git@github.com:o/n.git"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let td = p.create_todo("issue", "body", "", Vec::new()).unwrap();
+        p.set_github(&td.id, true).unwrap();
+        td.id
+    }
+
+    #[test]
+    fn test_sync_creates_issue_on_first_pass() {
+        let mut tp = new_project();
+        let id = link_todo(&tp.p);
+        let rep = sync_project(&mut tp.p, &FakeGh::new(IssueSnapshot::default()));
+        assert!(rep.gh_available);
+        assert_eq!(rep.created, 1);
+        let link = tp.get_todo(&id).unwrap().github.unwrap();
+        assert_eq!(link.number, 7);
+        assert!(!link.last_pushed.is_empty());
+    }
+
+    #[test]
+    fn test_sync_gh_unavailable_is_soft() {
+        struct DeadGh;
+        impl Gh for DeadGh {
+            fn auth_ok(&self) -> bool {
+                false
+            }
+            fn create_issue(&self, _: &str, _: &str, _: &str) -> crate::store::Result<i64> {
+                unreachable!()
+            }
+            fn edit_issue(&self, _: &str, _: i64, _: &str, _: &str) -> crate::store::Result<()> {
+                unreachable!()
+            }
+            fn close_issue(&self, _: &str, _: i64) -> crate::store::Result<()> {
+                unreachable!()
+            }
+            fn reopen_issue(&self, _: &str, _: i64) -> crate::store::Result<()> {
+                unreachable!()
+            }
+            fn view_issue(&self, _: &str, _: i64) -> crate::store::Result<IssueSnapshot> {
+                unreachable!()
+            }
+            fn create_comment(&self, _: &str, _: i64, _: &str) -> crate::store::Result<i64> {
+                unreachable!()
+            }
+        }
+        // Needs an ACTIVE linked todo — sync_project only reaches auth_ok() when
+        // there is work to do (perf gate). With no link it returns clean/quiet.
+        let mut tp = new_project();
+        link_todo(&tp.p);
+        let rep = sync_project(&mut tp.p, &DeadGh);
+        assert!(!rep.gh_available);
+        assert_eq!(rep.checked, 0);
+        assert_eq!(rep.errors.len(), 1);
+    }
+
+    #[test]
+    fn test_sync_no_links_is_quiet_and_skips_gh() {
+        // No synced todos: never call gh, report is empty/quiet (not an error).
+        struct PanicGh;
+        impl Gh for PanicGh {
+            fn auth_ok(&self) -> bool {
+                panic!("must not check auth with no links")
+            }
+            fn create_issue(&self, _: &str, _: &str, _: &str) -> crate::store::Result<i64> {
+                unreachable!()
+            }
+            fn edit_issue(&self, _: &str, _: i64, _: &str, _: &str) -> crate::store::Result<()> {
+                unreachable!()
+            }
+            fn close_issue(&self, _: &str, _: i64) -> crate::store::Result<()> {
+                unreachable!()
+            }
+            fn reopen_issue(&self, _: &str, _: i64) -> crate::store::Result<()> {
+                unreachable!()
+            }
+            fn view_issue(&self, _: &str, _: i64) -> crate::store::Result<IssueSnapshot> {
+                unreachable!()
+            }
+            fn create_comment(&self, _: &str, _: i64, _: &str) -> crate::store::Result<i64> {
+                unreachable!()
+            }
+        }
+        let mut tp = new_project();
+        tp.p.create_todo("unlinked", "", "", Vec::new()).unwrap();
+        let rep = sync_project(&mut tp.p, &PanicGh);
+        assert!(!rep.gh_available);
+        assert_eq!(rep.checked, 0);
+        assert!(rep.errors.is_empty());
+    }
+
+    #[test]
+    fn test_sync_pull_close_completes_todo_with_attribution() {
+        let mut tp = new_project();
+        let id = link_todo(&tp.p);
+        // First pass: create the issue (number 7, last_pushed=now).
+        sync_project(&mut tp.p, &FakeGh::new(IssueSnapshot::default()));
+        // Second pass: issue is Closed on GH, todo still open, tally not newer.
+        let snap = IssueSnapshot {
+            state: IssueState::Closed,
+            closed_by: "octocat".into(),
+            comments: vec![],
+        };
+        let rep = sync_project(&mut tp.p, &FakeGh::new(snap));
+        assert_eq!(rep.state_changes, 1);
+        let td = tp.get_todo(&id).unwrap();
+        assert_eq!(td.status, "completed");
+        assert_eq!(td.updated_by, "gh:octocat");
+    }
+
+    #[test]
+    fn test_sync_imports_and_pushes_comments() {
+        let mut tp = new_project();
+        let id = link_todo(&tp.p);
+        sync_project(&mut tp.p, &FakeGh::new(IssueSnapshot::default())); // create
+        // A local human note to push, and a GH comment to import.
+        tp.p.add_comment(&id, "", "please look").unwrap();
+        let snap = IssueSnapshot {
+            state: IssueState::Open,
+            closed_by: String::new(),
+            comments: vec![GhComment {
+                id: 100,
+                author: "octocat".into(),
+                created: "2026-07-12T09:00:00Z".into(),
+                body: "on it".into(),
+            }],
+        };
+        let rep = sync_project(&mut tp.p, &FakeGh::new(snap));
+        assert_eq!(rep.pulled_comments, 1);
+        assert_eq!(rep.pushed_comments, 1);
+        let comments = tp.list_comments(&id).unwrap();
+        // pulled comment present with gh author + id; local note now carries id 500.
+        assert!(
+            comments
+                .iter()
+                .any(|c| c.author == "gh:octocat" && c.github_comment_id == 100)
+        );
+        assert!(
+            comments
+                .iter()
+                .any(|c| c.text == "please look" && c.github_comment_id == 500)
+        );
+    }
 
     fn linked(number: i64, last_pushed: &str, last_comment_pull: &str) -> GithubLink {
         GithubLink {
