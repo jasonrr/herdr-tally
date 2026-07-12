@@ -156,13 +156,15 @@ fn binary_inode() -> Option<u64> {
         .map(|m| m.ino())
 }
 
-/// low→medium→high→low; anything unrecognized falls back to medium.
+/// p3→p2→p1→p0→p3 (severity ascending, wraps at critical); anything
+/// unrecognized falls back to p2.
 pub fn next_priority(cur: &str) -> &'static str {
     match cur {
-        "low" => "medium",
-        "medium" => "high",
-        "high" => "low",
-        _ => "medium",
+        "p3" => "p2",
+        "p2" => "p1",
+        "p1" => "p0",
+        "p0" => "p3",
+        _ => "p2",
     }
 }
 
@@ -1170,7 +1172,7 @@ impl App {
         self.edit_updated = String::new();
         self.edit_rev = 0;
         self.edit_id = String::new(); // signals "new" to save_edit
-        self.edit_priority = "medium".to_string();
+        self.edit_priority = "p2".to_string();
         self.read_id = String::new();
         self.edit_return = Mode::List;
         self.status.clear();
@@ -1406,10 +1408,11 @@ mod tests {
 
     #[test]
     fn priority_cycle() {
-        assert_eq!(next_priority("low"), "medium");
-        assert_eq!(next_priority("medium"), "high");
-        assert_eq!(next_priority("high"), "low");
-        assert_eq!(next_priority("bogus"), "medium"); // unrecognized falls back
+        assert_eq!(next_priority("p3"), "p2");
+        assert_eq!(next_priority("p2"), "p1");
+        assert_eq!(next_priority("p1"), "p0");
+        assert_eq!(next_priority("p0"), "p3");
+        assert_eq!(next_priority("bogus"), "p2"); // unrecognized falls back
     }
 
     #[test]
@@ -1445,11 +1448,11 @@ mod tests {
         app.tab = Tab::Todos;
         app.begin_edit_new();
         app.title_ed = super::new_editor("Ship it", true);
-        app.cycle_new_priority(); // medium -> high
+        app.cycle_new_priority(); // p2 -> p1
         app.save_edit();
         let todos = app.p.list_todos(Default::default()).unwrap();
         let t = todos.iter().find(|t| t.title == "Ship it").unwrap();
-        assert_eq!(t.priority, "high");
+        assert_eq!(t.priority, "p1");
     }
 
     #[test]
@@ -1514,15 +1517,13 @@ mod tests {
 
     #[test]
     fn filter_narrows_todos_by_metadata() {
-        let mut app = test_app_with_todos(&[
-            ("Rotate tokens", "auth", "high"),
-            ("Fix footer", "ui", "low"),
-        ]);
+        let mut app =
+            test_app_with_todos(&[("Rotate tokens", "auth", "p1"), ("Fix footer", "ui", "p3")]);
         app.tab = Tab::Todos;
         app.filter = "auth".to_string(); // matches tag on the first only
         assert_eq!(app.count(), 1);
         assert_eq!(app.visible_todos()[0].title, "Rotate tokens");
-        app.filter = "low".to_string(); // matches priority on the second
+        app.filter = "p3".to_string(); // matches priority on the second
         app.clamp_cursor();
         assert_eq!(app.count(), 1);
         assert_eq!(app.selected_id(), Some(app.visible_todos()[0].id.clone()));
@@ -1530,7 +1531,7 @@ mod tests {
 
     #[test]
     fn filter_clears_on_tab_switch() {
-        let mut app = test_app_with_todos(&[("A", "", "medium")]);
+        let mut app = test_app_with_todos(&[("A", "", "p2")]);
         app.tab = Tab::Todos;
         app.filter = "zzz".to_string();
         app.switch_tab(Tab::Scratchpads);
@@ -1542,7 +1543,7 @@ mod tests {
 
     #[test]
     fn filter_clears_when_switching_into_plans() {
-        let mut app = test_app_with_todos(&[("A", "", "medium")]);
+        let mut app = test_app_with_todos(&[("A", "", "p2")]);
         app.tab = Tab::Todos;
         app.filter = "zzz".to_string();
         app.switch_tab(Tab::Plans);
@@ -1552,10 +1553,10 @@ mod tests {
     #[test]
     fn cursor_pins_to_id_across_resort() {
         let mut f = Fixture::new(Tab::Todos);
-        let a = f.store().create_todo("a", "", "high", Vec::new()).unwrap();
-        let b = f.store().create_todo("b", "", "low", Vec::new()).unwrap();
+        let a = f.store().create_todo("a", "", "p1", Vec::new()).unwrap();
+        let b = f.store().create_todo("b", "", "p3", Vec::new()).unwrap();
         f.app.reload();
-        // priority sort: high first — a at 0, b at 1
+        // priority sort: p1 before p3 — a at 0, b at 1
         assert_eq!(f.app.todos[0].id, a.id);
         f.app.cursor[0] = 1;
         f.app.enter_read();
@@ -1565,7 +1566,7 @@ mod tests {
             .update_todo(
                 &b.id,
                 TodoUpdate {
-                    priority: Some("high".to_string()),
+                    priority: Some("p1".to_string()),
                     ..TodoUpdate::default()
                 },
             )
@@ -1574,7 +1575,7 @@ mod tests {
             .update_todo(
                 &a.id,
                 TodoUpdate {
-                    priority: Some("low".to_string()),
+                    priority: Some("p3".to_string()),
                     ..TodoUpdate::default()
                 },
             )
@@ -1590,15 +1591,15 @@ mod tests {
     #[test]
     fn list_mode_cursor_pins_to_selected_id() {
         let mut f = Fixture::new(Tab::Todos);
-        let a = f.store().create_todo("a", "", "high", Vec::new()).unwrap();
-        let b = f.store().create_todo("b", "", "low", Vec::new()).unwrap();
+        let a = f.store().create_todo("a", "", "p1", Vec::new()).unwrap();
+        let b = f.store().create_todo("b", "", "p3", Vec::new()).unwrap();
         f.app.reload();
         f.app.cursor[0] = 1; // select b
         f.store()
             .update_todo(
                 &b.id,
                 TodoUpdate {
-                    priority: Some("high".to_string()),
+                    priority: Some("p1".to_string()),
                     ..TodoUpdate::default()
                 },
             )
@@ -1607,7 +1608,7 @@ mod tests {
             .update_todo(
                 &a.id,
                 TodoUpdate {
-                    priority: Some("low".to_string()),
+                    priority: Some("p3".to_string()),
                     ..TodoUpdate::default()
                 },
             )
@@ -1794,14 +1795,11 @@ mod tests {
     #[test]
     fn read_mode_click_meta_segments_toggle_and_cycle() {
         let mut f = Fixture::new(Tab::Todos);
-        let t = f
-            .store()
-            .create_todo("t", "b", "medium", Vec::new())
-            .unwrap();
+        let t = f.store().create_todo("t", "b", "p2", Vec::new()).unwrap();
         f.app.reload();
         f.app.enter_read();
         // pretend the last draw put the meta row at y=4, x=0
-        f.app.hits.meta = Some(super::super::view::MetaHits::new(0, 4, "open", "medium"));
+        f.app.hits.meta = Some(super::super::view::MetaHits::new(0, 4, "open", "p2"));
         f.app.on_mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 1, // inside "○ open"
@@ -1809,27 +1807,22 @@ mod tests {
             modifiers: KeyModifiers::NONE,
         });
         assert_eq!(f.store().get_todo(&t.id).unwrap().status, "completed");
-        let (_, prio_start, _) = super::super::view::meta_segments("completed", "medium");
-        f.app.hits.meta = Some(super::super::view::MetaHits::new(
-            0,
-            4,
-            "completed",
-            "medium",
-        ));
+        let (_, prio_start, _) = super::super::view::meta_segments("completed", "p2");
+        f.app.hits.meta = Some(super::super::view::MetaHits::new(0, 4, "completed", "p2"));
         f.app.on_mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: prio_start,
             row: 4,
             modifiers: KeyModifiers::NONE,
         });
-        assert_eq!(f.store().get_todo(&t.id).unwrap().priority, "high");
+        assert_eq!(f.store().get_todo(&t.id).unwrap().priority, "p1");
     }
 
     #[test]
     fn list_click_selects_then_opens() {
         let mut f = Fixture::new(Tab::Todos);
-        f.store().create_todo("a", "", "high", Vec::new()).unwrap();
-        f.store().create_todo("b", "", "low", Vec::new()).unwrap();
+        f.store().create_todo("a", "", "p1", Vec::new()).unwrap();
+        f.store().create_todo("b", "", "p3", Vec::new()).unwrap();
         f.app.reload();
         f.app.hits.list = Some(super::super::view::ListHits {
             area: Rect::new(0, 2, 80, 20),

@@ -32,7 +32,9 @@ pub fn tab_ranges() -> [(u16, u16); 3] {
 /// The compact metadata row for a todo's detail/edit view. Only status and
 /// priority appear — the fields the TUI can actually change.
 pub fn meta_line(status: &str, priority: &str) -> String {
-    format!("○ {status}   ‖ {priority}")
+    // Uppercase for display (P0…P3); same char count as the stored lowercase,
+    // so meta_segments (which measures the raw value) stays pixel-aligned.
+    format!("○ {status}   ‖ {}", priority.to_uppercase())
 }
 
 /// Attribution suffix for the detail meta row: "   · by X, 2m ago", or
@@ -242,13 +244,13 @@ fn draw_list(app: &mut App, f: &mut Frame, area: Rect) {
                     ""
                 };
                 let n = app.comment_counts.get(&t.id).copied().unwrap_or(0);
-                // Priority to a single letter (H/M/L) — reclaims width for narrow panes.
-                let pri = t
-                    .priority
-                    .chars()
-                    .next()
-                    .map(|c| c.to_ascii_uppercase())
-                    .unwrap_or('?');
+                // Priority as its uppercased tag ([P0]…[P3]); "?" for the rare
+                // empty-priority todo (Todo::default, never via create_todo).
+                let pri = if t.priority.is_empty() {
+                    "?".to_string()
+                } else {
+                    t.priority.to_uppercase()
+                };
                 let left = format!("{glyph} [{pri}] {}{blocked}", t.title);
                 // Indicators pinned to the right edge (list order, time last) so a long
                 // title truncates instead of hiding them: comments, github link, lock,
@@ -938,23 +940,23 @@ mod tests {
         let repo = git_repo();
         let p = resolve_project_in(root.path(), Some(&repo.path().to_string_lossy())).unwrap();
         let mut app = App::new(p, Tab::Todos);
-        app.p.create_todo("Ship it", "", "high", vec![]).unwrap();
-        app.p.create_todo("Other task", "", "low", vec![]).unwrap();
+        app.p.create_todo("Ship it", "", "p1", vec![]).unwrap();
+        app.p.create_todo("Other task", "", "p3", vec![]).unwrap();
         app.reload();
 
-        app.filter = "high".to_string();
+        app.filter = "p1".to_string();
         let high_id = app.visible_todos()[0].id.clone();
         assert_eq!(app.visible_todos().len(), 1, "filter should narrow to one");
 
         app.enter_read();
         assert_eq!(app.read_id, high_id);
 
-        // Simulate `p` (cycle_priority): the item drops out of the "high" filter.
+        // Simulate `p` (cycle_priority): the item drops out of the "p1" filter.
         app.p
             .update_todo(
                 &high_id,
                 crate::store::TodoUpdate {
-                    priority: Some("low".to_string()),
+                    priority: Some("p3".to_string()),
                     ..Default::default()
                 },
             )
@@ -987,7 +989,7 @@ mod tests {
             .map(|i| format!("L{i:03}"))
             .collect::<Vec<_>>()
             .join("\n");
-        app.p.create_todo("Doc", &body, "high", vec![]).unwrap();
+        app.p.create_todo("Doc", &body, "p1", vec![]).unwrap();
         app.reload();
         app.enter_read();
         app.raw = true; // plain lines, no markdown wrapping surprises
@@ -1025,7 +1027,7 @@ mod tests {
         let repo = git_repo();
         let p = resolve_project_in(root.path(), Some(&repo.path().to_string_lossy())).unwrap();
         let mut app = App::new(p, Tab::Todos);
-        app.p.create_todo("A todo", "", "high", vec![]).unwrap();
+        app.p.create_todo("A todo", "", "p1", vec![]).unwrap();
         app.reload();
         app.mode = Mode::Help;
         for (w, h) in [(8u16, 4u16), (80, 30)] {
@@ -1079,7 +1081,7 @@ mod tests {
 
     #[test]
     fn meta_segments_match_rendered_line() {
-        let (status, priority) = ("open", "high");
+        let (status, priority) = ("open", "p1");
         let line: Vec<char> = meta_line(status, priority).chars().collect();
         let (status_end, prio_start, prio_end) = meta_segments(status, priority);
         let seg: String = line[..status_end as usize].iter().collect();
@@ -1087,13 +1089,13 @@ mod tests {
         let seg: String = line[prio_start as usize..prio_end as usize]
             .iter()
             .collect();
-        assert_eq!(seg, "‖ high");
+        assert_eq!(seg, "‖ P1");
         assert_eq!(prio_end as usize, line.len());
     }
 
     #[test]
     fn meta_seg_at_resolves_segments() {
-        let m = MetaHits::new(0, 4, "open", "medium");
+        let m = MetaHits::new(0, 4, "open", "p2");
         let h = Hits {
             meta: Some(m),
             ..Hits::default()
@@ -1102,8 +1104,8 @@ mod tests {
         assert_eq!(h.meta_seg_at(5, 4), Some(MetaSeg::Status)); // last char of "open"
         assert_eq!(h.meta_seg_at(7, 4), None); // the gap
         assert_eq!(h.meta_seg_at(9, 4), Some(MetaSeg::Priority)); // "‖"
-        assert_eq!(h.meta_seg_at(16, 4), Some(MetaSeg::Priority)); // last of "medium"
-        assert_eq!(h.meta_seg_at(17, 4), None); // past the end
+        assert_eq!(h.meta_seg_at(12, 4), Some(MetaSeg::Priority)); // last of "p2"
+        assert_eq!(h.meta_seg_at(13, 4), None); // past the end
         assert_eq!(h.meta_seg_at(9, 5), None); // wrong row
     }
 

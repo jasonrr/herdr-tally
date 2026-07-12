@@ -253,7 +253,7 @@ mod tests {
     fn todos_create_list_json() {
         let cli = Cli::new();
         assert_eq!(
-            cli.todos(&["create", "--title", "Hello", "--priority", "high"])
+            cli.todos(&["create", "--title", "Hello", "--priority", "p1"])
                 .0,
             0
         );

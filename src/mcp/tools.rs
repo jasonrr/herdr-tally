@@ -139,7 +139,7 @@ fn registry() -> Vec<Tool> {
     vec![
         // ─── todos ───────────────────────────────────────────────
         Tool { name: "todo_create", desc: "Create a todo in the project.",
-            schema: obj(req(&["title"]), json!({"title": prop("string", ""), "body": prop("string", ""), "priority": prop("string", "high|medium|low"), "tags": arr("")})),
+            schema: obj(req(&["title"]), json!({"title": prop("string", ""), "body": prop("string", ""), "priority": prop("string", "p0|p1|p2|p3"), "tags": arr("")})),
             run: |p, a| val(p.create_todo(&a.title, &a.body, &a.priority, a.tags())?) },
         Tool { name: "todo_list", desc: "List todos with optional filters and sort.",
             schema: obj(Value::Null, json!({"status": prop("string", ""), "completed": prop("boolean", ""), "is_blocked": prop("boolean", ""), "priority": prop("string", ""), "query": prop("string", ""), "tags": arr(""), "sort": prop("string", ""), "offset": prop("integer", ""), "limit": prop("integer", "")})),
@@ -450,7 +450,7 @@ mod tests {
     #[test]
     fn test_dispatch_todo_create_then_list() {
         let e = Env::new();
-        e.call("todo_create", r#"{"title":"via mcp","priority":"high"}"#)
+        e.call("todo_create", r#"{"title":"via mcp","priority":"p1"}"#)
             .unwrap();
         let res = e.call("todo_list", r#"{"status":"open"}"#).unwrap();
         let b = serde_json::to_string(&res).unwrap();

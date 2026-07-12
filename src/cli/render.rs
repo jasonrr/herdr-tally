@@ -19,9 +19,10 @@ fn status_label(s: &str) -> &str {
 
 fn prio_mark(p: &str) -> &str {
     match p {
-        "high" => "🔴",
-        "medium" => "🟡",
-        "low" => "⚪",
+        "p0" => "🔴",
+        "p1" => "🟠",
+        "p2" => "🟡",
+        "p3" => "⚪",
         _ => "",
     }
 }

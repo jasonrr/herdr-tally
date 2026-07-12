@@ -127,7 +127,7 @@ your agent's MCP config at `tally mcp`.
 
 ```bash
 # Todos — id-first CLI
-tally todos create --title "Rotate refresh tokens" --priority high --tag auth
+tally todos create --title "Rotate refresh tokens" --priority p1 --tag auth   # p0 (critical) … p3 (low)
 tally todos list --status open --json
 tally todos update <id> --status in_progress
 tally todos add-blocker <id> --blocker <other-id>   # can't start until <other-id> is done

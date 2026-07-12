@@ -218,7 +218,11 @@ impl Project {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(TodosFile::default()),
             Err(e) => return Err(e.into()),
         };
-        Ok(serde_json::from_slice(&b)?)
+        let mut tf: TodosFile = serde_json::from_slice(&b)?;
+        for t in &mut tf.todos {
+            t.priority = migrate_legacy_priority(&t.priority);
+        }
+        Ok(tf)
     }
 
     fn save_todos(&self, tf: &mut TodosFile) -> Result<()> {
@@ -244,7 +248,7 @@ impl Project {
         tags: Vec<String>,
     ) -> Result<Todo> {
         let priority = if priority.is_empty() {
-            "medium".to_string()
+            "p2".to_string()
         } else {
             normalize_priority(priority)?
         };
@@ -560,17 +564,30 @@ fn normalize_status(raw: &str) -> Result<String> {
 }
 
 /// Same story as normalize_status for priority: prio_rank sorts any unknown
-/// value alongside "high" (todos.rs), so a typo like "urgent" silently jumps
+/// value alongside "p0" (todos.rs), so a typo like "urgent" silently jumps
 /// the queue. User input is normalized (case, surrounding space) and rejected
-/// unless it's one of the three ranks.
+/// unless it's one of the four ranks (P0 critical … P3 low).
 fn normalize_priority(raw: &str) -> Result<String> {
     let s = raw.trim().to_lowercase();
     match s.as_str() {
-        "high" | "medium" | "low" => Ok(s),
+        "p0" | "p1" | "p2" | "p3" => Ok(s),
         _ => Err(Error::Other(format!(
-            "invalid priority {raw:?}: expected high, medium, or low"
+            "invalid priority {raw:?}: expected p0, p1, p2, or p3"
         ))),
     }
+}
+
+/// ponytail: one-shot legacy upgrade — old H/M/L stores map to the P0–P3 scale
+/// at load, so they self-heal on the next save. Delete once no legacy values
+/// remain on disk. Fresh writes go through normalize_priority (P0–P3 only).
+fn migrate_legacy_priority(p: &str) -> String {
+    match p {
+        "high" => "p1",
+        "medium" => "p2",
+        "low" => "p3",
+        other => other,
+    }
+    .to_string()
 }
 
 fn blocked_against(t: &Todo, all: &[Todo]) -> bool {
@@ -583,13 +600,15 @@ fn blocked_against(t: &Todo, all: &[Todo]) -> bool {
         .any(|b| status.get(b.as_str()).copied() != Some("completed"))
 }
 
-/// Go's prioRank map returned 0 (its zero value) for unknown priorities, so
-/// anything unrecognized sorts alongside "high". Preserved.
+/// P0 (critical) sorts first … P3 (low) last. Go's prioRank returned 0 (its
+/// zero value) for unknown priorities, so anything unrecognized sorts alongside
+/// "p0". Preserved.
 fn prio_rank(p: &str) -> i32 {
     match p {
-        "high" => 0,
-        "medium" => 1,
-        "low" => 2,
+        "p0" => 0,
+        "p1" => 1,
+        "p2" => 2,
+        "p3" => 3,
         _ => 0,
     }
 }
@@ -637,7 +656,7 @@ mod tests {
             .create_todo("Rotate tokens", "body", "", Vec::new())
             .unwrap();
         assert_eq!(td.status, "open");
-        assert_eq!(td.priority, "medium");
+        assert_eq!(td.priority, "p2");
         let got = p.get_todo(&td.id).unwrap();
         assert_eq!(got.title, "Rotate tokens");
     }
@@ -652,8 +671,10 @@ mod tests {
         assert!(normalize_status("closed").is_err());
         assert!(normalize_status("done").is_err());
 
-        assert_eq!(normalize_priority(" HIGH ").unwrap(), "high");
+        assert_eq!(normalize_priority(" P1 ").unwrap(), "p1");
         assert!(normalize_priority("urgent").is_err());
+        // legacy H/M/L is no longer valid input — only migrated at load
+        assert!(normalize_priority("high").is_err());
 
         let p = new_project();
         let td = p.create_todo("x", "", "", Vec::new()).unwrap();
@@ -669,7 +690,7 @@ mod tests {
     #[test]
     fn test_complete_and_incomplete() {
         let p = new_project();
-        let td = p.create_todo("x", "", "high", Vec::new()).unwrap();
+        let td = p.create_todo("x", "", "p1", Vec::new()).unwrap();
         let done = p.complete_todo(&td.id, true).unwrap();
         assert_eq!(done.status, "completed");
         assert!(done.completed.is_some());
@@ -689,8 +710,8 @@ mod tests {
     #[test]
     fn test_list_filter_and_sort() {
         let p = new_project();
-        let a = p.create_todo("a", "", "low", vec!["x".into()]).unwrap();
-        let b = p.create_todo("b", "", "high", vec!["y".into()]).unwrap();
+        let a = p.create_todo("a", "", "p3", vec!["x".into()]).unwrap();
+        let b = p.create_todo("b", "", "p1", vec!["y".into()]).unwrap();
         p.complete_todo(&a.id, false).unwrap();
 
         let open = p
@@ -717,7 +738,7 @@ mod tests {
                 ..Default::default()
             })
             .unwrap();
-        assert_eq!(by_prio[0].priority, "high");
+        assert_eq!(by_prio[0].priority, "p1");
     }
 
     #[test]
@@ -910,7 +931,10 @@ mod tests {
         let t1 = p.get_todo("t_go1").unwrap();
         assert_eq!(t1.tags, vec!["a", "b"]);
         assert!(t1.lock.is_none());
+        // Legacy H/M/L on disk is upgraded to the P0–P3 scale at load.
+        assert_eq!(t1.priority, "p2"); // medium -> p2
         let t2 = p.get_todo("t_go2").unwrap();
+        assert_eq!(t2.priority, "p1"); // high -> p1
         assert_eq!(t2.lock.as_ref().map(|l| l.owner.as_str()), Some("claude"));
         assert_eq!(t2.completed.as_deref(), Some("2026-01-02T03:04:07Z"));
         assert_eq!(t2.blockers, vec!["t_go1"]);
