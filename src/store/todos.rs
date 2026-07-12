@@ -480,6 +480,35 @@ impl Project {
         })
     }
 
+    /// The opt-in toggle behind the box-tick. `on` links (or un-pauses) the todo;
+    /// `off` pauses without dropping repo/number so re-ticking relinks the same
+    /// issue. Resolving the origin is only required when creating a fresh link.
+    pub fn set_github(&self, id: &str, on: bool) -> Result<Todo> {
+        // Resolve origin up front (edit closure can't re-borrow self). Only the
+        // fresh-link branch consumes it; re-tick/off ignore it.
+        let origin = if on { self.origin_repo() } else { None };
+        self.edit_todo_raw(id, |t| {
+            match (&mut t.github, on) {
+                (Some(link), true) => link.paused = false,
+                (Some(link), false) => link.paused = true,
+                (None, true) => {
+                    let repo = origin.clone().ok_or_else(|| {
+                        Error::Other("no git origin remote; cannot link to GitHub".to_string())
+                    })?;
+                    t.github = Some(GithubLink {
+                        repo,
+                        number: 0,
+                        last_pushed: String::new(),
+                        last_comment_pull: String::new(),
+                        paused: false,
+                    });
+                }
+                (None, false) => {} // no-op: nothing to unlink
+            }
+            Ok(())
+        })
+    }
+
     pub fn todo_tags(&self) -> Result<Vec<String>> {
         let tf = self.load_todos()?;
         let set: BTreeSet<&String> = tf.todos.iter().flat_map(|t| &t.tags).collect();
@@ -919,6 +948,42 @@ mod tests {
         );
         let back: Todo = serde_json::from_str(&js).unwrap();
         assert_eq!(back.github, t.github);
+    }
+
+    #[test]
+    fn test_set_github_toggle() {
+        // new_project() creates a git repo but no origin remote.
+        let p = new_project();
+        let td = p.create_todo("sync me", "", "", Vec::new()).unwrap();
+
+        // No origin remote yet -> linking fails, leaves the todo unlinked.
+        assert!(p.set_github(&td.id, true).is_err());
+        assert!(p.get_todo(&td.id).unwrap().github.is_none());
+
+        // Add an origin, then link.
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&p.path)
+            .args(["remote", "add", "origin", "git@github.com:owner/name.git"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+
+        let linked = p.set_github(&td.id, true).unwrap();
+        let link = linked.github.unwrap();
+        assert_eq!(link.repo, "owner/name");
+        assert_eq!(link.number, 0);
+        assert!(!link.paused);
+
+        // Untick pauses but keeps repo/number.
+        let paused = p.set_github(&td.id, false).unwrap();
+        let link = paused.github.unwrap();
+        assert!(link.paused);
+        assert_eq!(link.repo, "owner/name");
+
+        // Re-tick clears paused, same link (no new issue requested).
+        let retick = p.set_github(&td.id, true).unwrap();
+        assert!(!retick.github.unwrap().paused);
     }
 
     #[test]
