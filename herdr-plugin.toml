@@ -8,7 +8,8 @@ platforms = ["macos", "linux"]
 [[build]]
 platforms = ["linux", "macos"]
 # Runs on every `herdr plugin install` / re-link: fetch-or-build the binary into
-# bin/tally, then best-effort register the MCP server and install the agent skill.
+# bin/tally, then best-effort register the MCP server and write the tally guidance
+# block into ~/.claude/CLAUDE.md.
 command = ["/bin/sh", "scripts/install.sh"]
 
 # NOTE: panes open with cwd = the user's project (not the plugin root), and herdr

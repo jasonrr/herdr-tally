@@ -19,8 +19,9 @@ store methods. Logic and tests live in store. If CLI and MCP disagree, that's a 
   depend on them. Newline-delimited JSON-RPC 2.0 over stdio, NOT Content-Length
   framing. `notifications/initialized` gets no response. A panicking tool must not
   kill the server (return `Result` / `catch_unwind`).
-- **CLI surface is id-first** (`todos update <id> --status x`) — SKILL.md and agent
-  muscle memory depend on it. Arg parsing is hand-rolled; don't adopt clap conventions.
+- **CLI surface is id-first** (`todos update <id> --status x`), mirroring the MCP
+  tools — non-MCP callers depend on it. Arg parsing is hand-rolled; don't adopt clap
+  conventions.
 - **Revision guards (scratchpads only)**: every mutating scratchpad op takes an
   expected revision; `-1` skips ONLY for append/append-section; enforced in BOTH the
   CLI and MCP adapters. Todos are not revision-guarded; flock is their only ceiling.

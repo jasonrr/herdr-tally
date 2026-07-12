@@ -72,9 +72,11 @@ herdr plugin install jasonrr/herdr-tally
 
 This downloads a prebuilt `tally` binary for your platform (macOS arm64/x86_64,
 Linux x86_64), verifies its SHA-256, and — best-effort — registers the MCP server
-with Claude Code and installs the `tally` agent skill. No Rust toolchain is needed
-when a release exists for your platform; otherwise install falls back to building
-from source with `cargo` (install Rust from https://rustup.rs).
+with Claude Code and writes a short tally guidance block into `~/.claude/CLAUDE.md`
+(idempotent, marker-delimited) so every session knows to reach for the `tally_*`
+tools. No Rust toolchain is needed when a release exists for your platform;
+otherwise install falls back to building from source with `cargo` (install Rust
+from https://rustup.rs).
 
 **Platforms:** macOS and Linux. Windows is not yet supported.
 
@@ -88,11 +90,11 @@ or find the paths yourself:
 # Register the MCP server:
 tally_bin=$(ls -d "$HOME"/.config/herdr/plugins/github/herdr-tally-*/bin/tally 2>/dev/null | tail -1)
 claude mcp add --scope user tally -- "$tally_bin" mcp
-
-# Install the agent skill:
-tally_root=$(ls -d "$HOME"/.config/herdr/plugins/github/herdr-tally-*/ 2>/dev/null | tail -1)
-mkdir -p ~/.claude/skills/tally && cp "${tally_root}SKILL.md" ~/.claude/skills/tally/SKILL.md
 ```
+
+The guidance block is optional — tally works without it; it just primes agents to
+use the tools. If the installer couldn't write it, re-run the install step or paste
+the `tally:start`/`tally:end` block from `scripts/install.sh` into `~/.claude/CLAUDE.md`.
 
 The plugin root is version-hashed; `tail -1` picks the newest if multiple versions
 are present. Prefer the exact command the installer printed over these fallbacks.
@@ -157,9 +159,11 @@ The TUI carries the same work across tabs — todos, scratchpads, and a read-onl
 
 ## For agents
 
-The [`SKILL.md`](SKILL.md) at the repo root tells an agent when to reach for a
-todo vs. a scratchpad, and the etiquette (short titles, complete what you finish,
-don't delete the human's items). If you run agents in herdr, they'll pick it up.
+Install writes a short tally block into `~/.claude/CLAUDE.md` telling an agent to
+prefer the `tally_*` MCP tools, when to reach for a todo vs. a scratchpad, and the
+etiquette (short titles, complete what you finish, don't delete the human's items).
+The MCP tool schemas document the rest; agents `ToolSearch` for `mcp__tally__` to
+load them.
 
 ## Development
 

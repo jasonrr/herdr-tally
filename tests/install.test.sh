@@ -1,7 +1,8 @@
 #!/bin/sh
 # Hermetic test for scripts/install.sh. Stubs the binary step (TALLY_FETCH_OR_BUILD),
-# a fake `claude` on PATH, and a temp HOME, then asserts MCP registration + skill copy
-# happen and that a missing `claude` still exits 0 with a manual-fix message.
+# a fake `claude` on PATH, and a temp HOME, then asserts MCP registration + the
+# ~/.claude/CLAUDE.md guidance block (written once, idempotent) happen and that a
+# missing `claude` still exits 0.
 set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 script="$here/../scripts/install.sh"
@@ -29,18 +30,26 @@ export TALLY_FETCH_OR_BUILD="$work/fob.sh"
 export HERDR_PLUGIN_ROOT="$work"          # so bin path = $work/bin/tally ... see note
 # Point the binary the MCP command references at our stub location:
 export TALLY_BIN="$work/pluginbin/tally"
-# HERDR_PLUGIN_ROOT=$work would make the default TALLY_SKILL resolve to $work/SKILL.md,
-# which doesn't exist. Point it at the real repo-root SKILL.md instead.
-export TALLY_SKILL="$plugin_root/SKILL.md"
 
-# ===== Case A: claude present -> registers MCP + installs skill =================
+# Seed a pre-existing global CLAUDE.md to prove the block is appended, not clobbering.
+mkdir -p "$HOME/.claude"
+printf '# my rules\nkeep me\n' > "$HOME/.claude/CLAUDE.md"
+
+# ===== Case A: claude present -> registers MCP + writes guidance block ==========
 PATH="$work/bin:$PATH" sh "$script" >/dev/null 2>&1 || true
 addline=$(grep -c "mcp add --scope user tally -- $work/pluginbin/tally mcp" "$work/claude.log" 2>/dev/null || echo 0)
 check "mcp add invoked with user scope + bin path" "$addline" "1"
 rmline=$(grep -c "mcp remove --scope user tally" "$work/claude.log" 2>/dev/null || echo 0)
 check "mcp remove invoked before add" "$rmline" "1"
-skill=$( [ -f "$HOME/.claude/skills/tally/SKILL.md" ] && echo yes || echo no )
-check "skill copied into ~/.claude/skills/tally" "$skill" "yes"
+markers=$(grep -c "<!-- tally:start -->" "$HOME/.claude/CLAUDE.md" 2>/dev/null || echo 0)
+check "guidance block written to ~/.claude/CLAUDE.md" "$markers" "1"
+kept=$(grep -c "keep me" "$HOME/.claude/CLAUDE.md" 2>/dev/null || echo 0)
+check "pre-existing CLAUDE.md content preserved" "$kept" "1"
+
+# Idempotent: a second run replaces the block rather than stacking a second copy.
+PATH="$work/bin:$PATH" sh "$script" >/dev/null 2>&1 || true
+markers2=$(grep -c "<!-- tally:start -->" "$HOME/.claude/CLAUDE.md" 2>/dev/null || echo 0)
+check "re-run leaves exactly one block" "$markers2" "1"
 
 # ===== Case B: claude absent -> still exit 0 ====================================
 rm -f "$work/claude.log"
