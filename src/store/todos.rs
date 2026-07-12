@@ -988,7 +988,10 @@ mod tests {
             "future_field":{"k":"v"}}"#;
         let t: Todo = serde_json::from_str(src).unwrap();
         let js = serde_json::to_string(&t).unwrap();
-        assert!(js.contains("future_field") && js.contains(r#""k":"v""#), "{js}");
+        assert!(
+            js.contains("future_field") && js.contains(r#""k":"v""#),
+            "{js}"
+        );
     }
 
     #[test]

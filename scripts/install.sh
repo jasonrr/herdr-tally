@@ -20,6 +20,33 @@ if ! sh "$fob"; then
   exit 1
 fi
 
+# --- 1b. stale consumers (best-effort) ------------------------------------------
+# The binary above was swapped to a FRESH inode (rm -f + cp). Any tally process
+# still running holds the OLD image and, on its next whole-file store write, would
+# silently drop fields the old code doesn't know (this is how a linked todo's
+# github block vanished). Kill stale TUI panes — they're ours to restart; the user
+# reopens them on the new binary. Do NOT kill MCP servers: each is a stdio child of
+# a live agent session, and killing one yanks that agent's tally tools
+# mid-conversation — report them so the human restarts the session deliberately.
+# ponytail: kills every running TUI unconditionally (install is rare); inode-compare
+# per-pid only if a no-op re-install churning live panes ever actually annoys.
+if command -v pgrep >/dev/null 2>&1; then
+  tui_pids=$(pgrep -f 'bin/tally tui' 2>/dev/null || true)
+  if [ -n "$tui_pids" ]; then
+    # shellcheck disable=SC2086  # intentional word-split: one signal per pid
+    kill $tui_pids 2>/dev/null || true
+    tui_list=$(printf '%s' "$tui_pids" | tr '\n' ' ')
+    echo "tally: killed stale TUI pane(s) [${tui_list% }] — reopen via the herdr Todos/Scratchpads action."
+  fi
+  mcp_pids=$(pgrep -f 'bin/tally mcp' 2>/dev/null || true)
+  if [ -n "$mcp_pids" ]; then
+    mcp_list=$(printf '%s' "$mcp_pids" | tr '\n' ' ')
+    echo "tally: WARNING — stale MCP server(s) still on the old binary [${mcp_list% }]." >&2
+    echo "       Each is bound to a live agent session; reconnect those sessions (or kill the PIDs)" >&2
+    echo "       so they pick up the new binary before their next todo write." >&2
+  fi
+fi
+
 # --- 2. MCP server registration (best-effort) -----------------------------------
 find_claude() {
   for c in "$HOME/.local/bin/claude" /opt/homebrew/bin/claude /usr/local/bin/claude; do

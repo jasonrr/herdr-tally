@@ -5,6 +5,7 @@
 //! hardcoded column math.
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
+use std::os::unix::fs::MetadataExt;
 use std::process::{Command, Stdio};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -137,6 +138,22 @@ pub struct App {
     pub sync_status: std::sync::Arc<std::sync::Mutex<String>>,
     /// Nudge channel to wake the worker after a local mutation. None in tests.
     pub sync_tx: Option<std::sync::mpsc::Sender<()>>,
+
+    /// Inode of our own binary at launch. An install/rebuild swaps `bin/tally` to
+    /// a FRESH inode (rm -f + cp), but this long-lived process keeps executing the
+    /// old image — and a whole-file store write from stale code silently drops
+    /// fields it doesn't know (see the github-link-loss incident). `stale` flips
+    /// once the file at our path no longer matches, so the footer can nag a restart.
+    pub launch_inode: Option<u64>,
+    pub stale: bool,
+}
+
+/// Inode of the file currently at our own executable's path. `None` if it can't
+/// be resolved (never warn on a transient stat failure).
+fn binary_inode() -> Option<u64> {
+    std::fs::metadata(std::env::current_exe().ok()?)
+        .ok()
+        .map(|m| m.ino())
 }
 
 /// low→medium→high→low; anything unrecognized falls back to medium.
@@ -259,6 +276,8 @@ impl App {
             hits: Hits::default(),
             sync_status: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
             sync_tx: None,
+            launch_inode: binary_inode(),
+            stale: false,
         };
         app.load_ui_state();
         app
@@ -289,6 +308,12 @@ impl App {
     /// can't silently retarget the detail view; list mode pins to the selected
     /// row's id for the same reason.
     pub fn reload(&mut self) {
+        // Cheap staleness check on the reload cadence: if the file at our own path
+        // no longer matches the inode we launched from, a rebuild/install swapped
+        // it and this process is now running dead code.
+        if let (Some(launch), Some(cur)) = (self.launch_inode, binary_inode()) {
+            self.stale = launch != cur;
+        }
         let list_sel = if self.mode == Mode::List {
             self.selected_id()
         } else {

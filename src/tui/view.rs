@@ -152,7 +152,8 @@ impl Hits {
 
 pub fn draw(app: &mut App, f: &mut Frame) {
     app.hits = Hits::default();
-    let footer_h = if app.status.is_empty() { 1 } else { 2 };
+    // hints/sync line, + optional stale-binary warning, + optional status line.
+    let footer_h = 1 + u16::from(app.stale) + u16::from(!app.status.is_empty());
     let [tab_area, content, footer_area] = Layout::vertical([
         Constraint::Length(2), // tab bar line + blank line
         Constraint::Min(0),
@@ -759,6 +760,11 @@ fn draw_footer(app: &App, f: &mut Frame, area: Rect) {
         ])
     };
     let mut lines = vec![first];
+    if app.stale {
+        lines.push(
+            Line::from("⚠ tally binary updated — restart this pane (running stale code)").red(),
+        );
+    }
     if !app.status.is_empty() {
         lines.push(Line::from(app.status.clone()));
     }
