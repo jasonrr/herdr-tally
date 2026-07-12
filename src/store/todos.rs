@@ -6,7 +6,7 @@
 // Todos are NOT revision-guarded (Solo parity) — the per-file flock is the
 // concurrency ceiling. The optional expected_updated guard on update_todo is
 // the one exception, and it is opt-in.
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Deserializer, Serialize};
@@ -80,6 +80,14 @@ pub struct Todo {
     /// unchanged AND unsynced todos serialize byte-identical to today.
     #[serde(rename = "github", default, skip_serializing_if = "Option::is_none")]
     pub github: Option<GithubLink>,
+    /// Catch-all for keys this binary doesn't know. A whole-file rewrite by an
+    /// OLDER tally binary used to silently drop any field it lacked (e.g. `github`
+    /// vanished when a pre-github mcp/tui process edited some other todo), because
+    /// save writes the entire file. Capturing unknowns here round-trips them
+    /// intact. ponytail: only protects fields added AFTER this ships — a binary
+    /// still older than this catch-all can't preserve what it can't hold.
+    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -255,6 +263,7 @@ impl Project {
             created_by: self.actor.clone(),
             updated_by: self.actor.clone(),
             github: None,
+            extra: BTreeMap::new(),
         };
         let cp = td.clone();
         self.mutate_todos(|tf| {
@@ -965,6 +974,21 @@ mod tests {
         );
         let back: Todo = serde_json::from_str(&js).unwrap();
         assert_eq!(back.github, t.github);
+    }
+
+    #[test]
+    fn test_unknown_field_survives_roundtrip() {
+        // A newer schema wrote `github`; THIS binary (pretend it predates it) must
+        // preserve the key across load->save instead of silently dropping it, or a
+        // whole-file rewrite strips it from every todo.
+        let src = r#"{"id":"t_x","title":"t","body":"","status":"open",
+            "priority":"medium","tags":[],"blockers":[],"lock":null,
+            "created":"","updated":"","completed":null,
+            "github":{"repo":"o/n","number":1,"paused":false},
+            "future_field":{"k":"v"}}"#;
+        let t: Todo = serde_json::from_str(src).unwrap();
+        let js = serde_json::to_string(&t).unwrap();
+        assert!(js.contains("future_field") && js.contains(r#""k":"v""#), "{js}");
     }
 
     #[test]
