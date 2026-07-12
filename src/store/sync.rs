@@ -217,6 +217,12 @@ fn sync_one(
     // post-pass now() would silently skip anything that arrived mid-pass.
     let pass_start = now();
 
+    // Known limitation: best-effort writeback, not a transaction. If the local
+    // store write below (or the one in PushComment) fails AFTER a successful gh
+    // call (create_issue / create_comment), the GH side effect already happened
+    // but its id isn't persisted, so a retry next tick can create a duplicate.
+    // Accepted: local write failure is rare and there's no cross-process transaction.
+
     // Create: no issue yet. One pass creates it; the next reconciles state/comments.
     if link.number == 0 {
         link.number = gh.create_issue(&link.repo, &todo.title, &todo.body)?;

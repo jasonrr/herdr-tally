@@ -104,9 +104,25 @@ fn spawn_sync_worker(project_path: String, status: Arc<Mutex<String>>) -> mpsc::
         loop {
             match resolve_project(Some(&project_path)) {
                 Ok(mut p) => {
-                    let rep = sync_project(&mut p, &GhCli);
-                    if let Ok(mut s) = status.lock() {
-                        *s = app::summarize(&rep);
+                    // Panic-isolate: a panic inside sync_project must not kill this
+                    // thread, or background sync silently stops for the rest of the
+                    // TUI session (footer freezes, no signal). Mirrors the MCP
+                    // server's catch_unwind discipline (see CLAUDE.md). The next
+                    // loop iteration re-resolves its own Project, so this self-heals.
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        sync_project(&mut p, &GhCli)
+                    }));
+                    match result {
+                        Ok(rep) => {
+                            if let Ok(mut s) = status.lock() {
+                                *s = app::summarize(&rep);
+                            }
+                        }
+                        Err(_) => {
+                            if let Ok(mut s) = status.lock() {
+                                *s = "⚠ sync worker error (recovered)".to_string();
+                            }
+                        }
                     }
                 }
                 Err(e) => {

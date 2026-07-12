@@ -20,10 +20,9 @@ pub(crate) use scratchpads::{norm_heading, parse_headings};
 pub use sync::{Gh, GhCli, SyncReport, sync_project};
 // Public sync vocabulary. `IssueState`/`IssueSnapshot` are the `Gh` trait's return
 // types (anyone implementing `Gh` needs them) and `GithubLink` is the type of the
-// public `Todo::github` field. In this binary crate the non-test code never *names*
-// them — it only calls `Gh` methods and reads the field — so `unused_imports` flags
-// these re-exports: a false positive for intentional public API. Consumed by tests
-// and by any external embedder of the `store` module.
+// public `Todo::github` field. Named only by tests today (and kept public as the
+// store's flat API surface); the non-test binary reaches them only through `Gh`
+// methods and the `Todo::github` field, so `unused_imports` false-positives.
 #[allow(unused_imports)]
 pub use sync::{IssueSnapshot, IssueState};
 #[allow(unused_imports)]
