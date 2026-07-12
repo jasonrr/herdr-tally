@@ -29,6 +29,7 @@ struct Args {
     tag: String,
     blocker: String,
     blockers: Vec<String>,
+    github: String,
     query: String,
     sort: String,
     completed: Option<bool>,
@@ -147,7 +148,7 @@ fn registry() -> Vec<Tool> {
             schema: obj(req(&["id"]), json!({"id": prop("string", "")})),
             run: |p, a| val(p.get_todo(&a.id)?) },
         Tool { name: "todo_update", desc: "Update provided todo fields; omitted fields preserved.",
-            schema: obj(req(&["id"]), json!({"id": prop("string", ""), "title": prop("string", ""), "body": prop("string", ""), "priority": prop("string", ""), "status": prop("string", ""), "tags": arr("")})),
+            schema: obj(req(&["id"]), json!({"id": prop("string", ""), "title": prop("string", ""), "body": prop("string", ""), "priority": prop("string", ""), "status": prop("string", ""), "tags": arr(""), "github": prop("string", "on|off (opt-in sync); empty = unchanged")})),
             run: |p, a| {
                 let mut u = TodoUpdate::default();
                 // Deliberate quirk: empty string means "unchanged" (can't clear a
@@ -157,7 +158,22 @@ fn registry() -> Vec<Tool> {
                 if !a.priority.is_empty() { u.priority = Some(a.priority.clone()); }
                 if !a.status.is_empty() { u.status = Some(a.status.clone()); }
                 if let Some(t) = &a.tags { u.tags = Some(t.clone()); }
-                val(p.update_todo(&a.id, u)?)
+                let has_fields = u.title.is_some() || u.body.is_some() || u.priority.is_some()
+                    || u.status.is_some() || u.tags.is_some();
+                let mut td = if has_fields { Some(p.update_todo(&a.id, u)?) } else { None };
+                // Empty string = unchanged (consistent with the field quirk above).
+                if !a.github.is_empty() {
+                    let on = match a.github.as_str() {
+                        "on" => true,
+                        "off" => false,
+                        other => return Err(Error::Other(format!("github must be on|off, got {other:?}"))),
+                    };
+                    td = Some(p.set_github(&a.id, on)?);
+                }
+                match td {
+                    Some(t) => val(t),
+                    None => val(p.get_todo(&a.id)?),
+                }
             } },
         Tool { name: "todo_delete", desc: "Delete a todo.",
             schema: obj(req(&["id"]), json!({"id": prop("string", "")})),
@@ -433,6 +449,39 @@ mod tests {
         let res = e.call("todo_list", r#"{"status":"open"}"#).unwrap();
         let b = serde_json::to_string(&res).unwrap();
         assert!(b.contains("via mcp"), "list: {b}");
+    }
+
+    #[test]
+    fn test_todo_update_github_param() {
+        let e = Env::new();
+        // origin on the temp repo so linking resolves
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(e._repo.path())
+            .args(["remote", "add", "origin", "git@github.com:owner/name.git"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+
+        let created = e.call("todo_create", r#"{"title":"x"}"#).unwrap();
+        let id = created["id"].as_str().unwrap().to_string();
+        let on = e
+            .call("todo_update", &format!(r#"{{"id":"{id}","github":"on"}}"#))
+            .unwrap();
+        assert_eq!(on["github"]["repo"].as_str(), Some("owner/name"));
+        assert_eq!(on["github"]["paused"].as_bool(), Some(false));
+        let off = e
+            .call("todo_update", &format!(r#"{{"id":"{id}","github":"off"}}"#))
+            .unwrap();
+        assert_eq!(off["github"]["paused"].as_bool(), Some(true));
+        // bogus value errors
+        assert!(
+            e.call(
+                "todo_update",
+                &format!(r#"{{"id":"{id}","github":"maybe"}}"#)
+            )
+            .is_err()
+        );
     }
 
     // Port of TestDispatchScratchpadWriteRevisionGuard.

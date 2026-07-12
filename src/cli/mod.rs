@@ -339,6 +339,38 @@ mod tests {
     }
 
     #[test]
+    fn todos_github_toggle_via_update() {
+        let cli = Cli::new();
+        // add an origin so linking can resolve a repo
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(cli.repo.path())
+            .args(["remote", "add", "origin", "git@github.com:owner/name.git"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+
+        cli.todos(&["create", "--title", "Sync me"]);
+        let (_, out) = cli.todos(&["list", "--json"]);
+        let listed: TodoList = serde_json::from_str(&out).unwrap();
+        let id = listed.todos[0].id.clone();
+
+        assert_eq!(cli.todos(&["update", &id, "--github", "on"]).0, 0);
+        let (_, out) = cli.todos(&["get", &id, "--json"]);
+        let got: crate::store::Todo = serde_json::from_str(&out).unwrap();
+        assert_eq!(got.github.as_ref().unwrap().repo, "owner/name");
+        assert!(!got.github.as_ref().unwrap().paused);
+
+        assert_eq!(cli.todos(&["update", &id, "--github", "off"]).0, 0);
+        let (_, out) = cli.todos(&["get", &id, "--json"]);
+        let got: crate::store::Todo = serde_json::from_str(&out).unwrap();
+        assert!(got.github.unwrap().paused);
+
+        // bogus value is rejected
+        assert_ne!(cli.todos(&["update", &id, "--github", "maybe"]).0, 0);
+    }
+
+    #[test]
     fn scratchpads_create_read_list() {
         let cli = Cli::new();
         let (_, out) = cli.scratch(&[

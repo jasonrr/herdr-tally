@@ -24,6 +24,7 @@ const VALUE_FLAGS: &[&str] = &[
     "is-blocked",
     "tag",
     "blocker",
+    "github",
     "offset",
     "limit",
 ];
@@ -83,6 +84,7 @@ pub(crate) fn run(args: &[String], store_root: Option<&Path>, out: &mut dyn Writ
     let is_blocked = p.str("is-blocked", "");
     let tags = p.multi("tag");
     let blockers = p.multi("blocker");
+    let github = p.str("github", "");
     let as_json = p.boolean("json", false);
     let release_lock = p.boolean("release-lock", true);
     let offset = p.int("offset", 0);
@@ -152,9 +154,43 @@ pub(crate) fn run(args: &[String], store_root: Option<&Path>, out: &mut dyn Writ
             if p.was_set("tag") {
                 u.tags = Some(tags);
             }
-            match proj.update_todo(&id, u) {
-                Ok(td) => emit_todo(out, &td),
-                Err(e) => return fail(&e.to_string()),
+
+            // Apply field updates only when some field was actually set, so a
+            // pure --github toggle doesn't write an empty (updated-bumping) update.
+            let has_fields = p.was_set("title")
+                || p.was_set("priority")
+                || p.was_set("status")
+                || p.was_set("body")
+                || p.was_set("body-file")
+                || p.was_set("tag");
+            let mut td = if has_fields {
+                match proj.update_todo(&id, u) {
+                    Ok(td) => Some(td),
+                    Err(e) => return fail(&e.to_string()),
+                }
+            } else {
+                None
+            };
+            if p.was_set("github") {
+                let on = match github.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    other => return fail(&format!("--github must be on|off, got {other:?}")),
+                };
+                match proj.set_github(&id, on) {
+                    Ok(t) => td = Some(t),
+                    Err(e) => return fail(&e.to_string()),
+                }
+            }
+            match td {
+                Some(t) => emit_todo(out, &t),
+                None => {
+                    // Neither fields nor --github: fall back to a no-op fetch+emit.
+                    match proj.get_todo(&id) {
+                        Ok(t) => emit_todo(out, &t),
+                        Err(e) => return fail(&e.to_string()),
+                    }
+                }
             }
         }
         "delete" => {
