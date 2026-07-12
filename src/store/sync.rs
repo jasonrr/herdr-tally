@@ -240,6 +240,32 @@ mod tests {
     }
 
     #[test]
+    fn test_plan_reopen_issue_when_tally_newer_and_issue_closed() {
+        // tally is newer (edited after last push) and todo is open, but the GH
+        // issue is closed -> push an edit then reopen the issue.
+        let t = todo_at("open", "2026-07-12T02:00:00Z");
+        let link = linked(5, "2026-07-12T01:00:00Z", "");
+        let snap = IssueSnapshot {
+            state: IssueState::Closed,
+            closed_by: String::new(),
+            comments: vec![],
+        };
+        let acts = plan_actions(&t, &link, &[], &snap);
+        assert_eq!(acts, vec![Action::EditIssue, Action::ReopenIssue]);
+    }
+
+    #[test]
+    fn test_plan_reopen_todo_when_gh_reopened() {
+        // tally NOT newer (updated == last_pushed) so GH wins; issue is open but
+        // the todo is completed -> pull a reopen onto the todo.
+        let t = todo_at("completed", "2026-07-12T01:00:00Z");
+        let link = linked(5, "2026-07-12T01:00:00Z", "");
+        let snap = IssueSnapshot::default(); // Open, closed_by ""
+        let acts = plan_actions(&t, &link, &[], &snap);
+        assert_eq!(acts, vec![Action::ReopenTodo { by: String::new() }]);
+    }
+
+    #[test]
     fn test_parse_repo_forms() {
         assert_eq!(
             parse_repo("git@github.com:owner/name.git").as_deref(),
