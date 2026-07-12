@@ -130,6 +130,47 @@ impl Project {
         self.add_comment_kind(target, "", "event", text)
     }
 
+    /// Insert a comment pulled from GitHub: preserves the GH author (`gh:<login>`),
+    /// the GH creation timestamp, and the GH comment id (echo prevention).
+    pub(crate) fn import_github_comment(
+        &self,
+        target: &str,
+        author: &str,
+        created: &str,
+        gh_id: i64,
+        text: &str,
+    ) -> Result<Comment> {
+        let c = Comment {
+            id: new_id("c_"),
+            target: norm_target(target).to_string(),
+            section: String::new(),
+            author: author.to_string(),
+            created: created.to_string(),
+            kind: "note".to_string(),
+            text: text.to_string(),
+            github_comment_id: gh_id,
+        };
+        let cp = c.clone();
+        self.mutate_comments(|cf| {
+            cf.comments.push(cp);
+            Ok(())
+        })?;
+        Ok(c)
+    }
+
+    /// Stamp the GH comment id onto a local comment we just pushed (echo prevention).
+    pub(crate) fn set_comment_github_id(&self, comment_id: &str, gh_id: i64) -> Result<()> {
+        self.mutate_comments(|cf| {
+            let c = cf
+                .comments
+                .iter_mut()
+                .find(|c| c.id == comment_id)
+                .ok_or(Error::NotFound)?;
+            c.github_comment_id = gh_id;
+            Ok(())
+        })
+    }
+
     /// Every comment in the store, file order (chronological). The primitive
     /// the recent/summary queries share.
     pub(crate) fn all_comments(&self) -> Result<Vec<Comment>> {
@@ -587,5 +628,36 @@ mod tests {
         let sums = tp.comment_summaries().unwrap();
         assert_eq!(sums[0].target, "t_b");
         assert_eq!(sums[1].target, "t_a");
+    }
+
+    #[test]
+    fn test_import_and_set_github_comment_id() {
+        let tp = new_project();
+        let c = tp
+            .import_github_comment(
+                "t_x",
+                "gh:octocat",
+                "2026-07-12T00:00:00Z",
+                999,
+                "hi from GH",
+            )
+            .unwrap();
+        assert_eq!(c.author, "gh:octocat");
+        assert_eq!(c.github_comment_id, 999);
+        assert_eq!(c.kind, "note");
+        assert_eq!(c.created, "2026-07-12T00:00:00Z");
+        let listed = tp.list_comments("t_x").unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].github_comment_id, 999);
+
+        let local = tp.add_comment("t_x", "", "local note").unwrap();
+        tp.set_comment_github_id(&local.id, 12345).unwrap();
+        let found = tp
+            .list_comments("t_x")
+            .unwrap()
+            .into_iter()
+            .find(|x| x.id == local.id)
+            .unwrap();
+        assert_eq!(found.github_comment_id, 12345);
     }
 }

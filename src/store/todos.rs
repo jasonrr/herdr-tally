@@ -509,6 +509,23 @@ impl Project {
         })
     }
 
+    /// Persist a link's fields (number/timestamps) WITHOUT touching updated/
+    /// updated_by or logging an event — this is sync's own writeback, not a user
+    /// edit, so it must not re-trigger the `updated > last_pushed` push rule.
+    pub(crate) fn update_github_link(&self, id: &str, mut link: GithubLink) -> Result<()> {
+        self.mutate_todos(|tf| {
+            let t = tf.find_mut(id).ok_or(Error::NotFound)?;
+            // Merge, don't clobber: a concurrent un-tick set paused=true after this
+            // pass cloned the link, so preserve the stored paused rather than the
+            // (stale) paused carried in `link`.
+            if let Some(existing) = &t.github {
+                link.paused = existing.paused;
+            }
+            t.github = Some(link);
+            Ok(())
+        })
+    }
+
     pub fn todo_tags(&self) -> Result<Vec<String>> {
         let tf = self.load_todos()?;
         let set: BTreeSet<&String> = tf.todos.iter().flat_map(|t| &t.tags).collect();
@@ -1000,5 +1017,58 @@ mod tests {
         assert_eq!(epoch_from_rfc3339("2026-07-10T12:00:00+00:00"), None);
         assert_eq!(epoch_from_rfc3339("2026-07-10T12X00Y00Z"), None);
         assert_eq!(epoch_from_rfc3339("2026-07-10T12:00:00X"), None);
+    }
+
+    #[test]
+    fn test_update_github_link_does_not_bump_updated() {
+        let p = new_project();
+        let td = p.create_todo("x", "", "", Vec::new()).unwrap();
+        let before = td.updated.clone();
+        p.update_github_link(
+            &td.id,
+            GithubLink {
+                repo: "o/n".into(),
+                number: 7,
+                last_pushed: "t".into(),
+                last_comment_pull: String::new(),
+                paused: false,
+            },
+        )
+        .unwrap();
+        let got = p.get_todo(&td.id).unwrap();
+        assert_eq!(got.github.unwrap().number, 7);
+        assert_eq!(got.updated, before, "sync writeback must not bump updated");
+    }
+
+    #[test]
+    fn test_update_github_link_preserves_paused() {
+        // A concurrent un-tick (paused=true) must survive sync's own end-of-pass
+        // writeback, which carries paused=false from the pre-pass link clone.
+        let p = new_project();
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&p.path)
+            .args(["remote", "add", "origin", "git@github.com:o/n.git"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let td = p.create_todo("x", "", "", Vec::new()).unwrap();
+        p.set_github(&td.id, true).unwrap(); // link, paused=false
+        p.set_github(&td.id, false).unwrap(); // user un-ticks -> paused=true stored
+        // Sync writeback arrives with a stale paused=false clone.
+        p.update_github_link(
+            &td.id,
+            GithubLink {
+                repo: "o/n".into(),
+                number: 7,
+                last_pushed: "t".into(),
+                last_comment_pull: String::new(),
+                paused: false,
+            },
+        )
+        .unwrap();
+        let link = p.get_todo(&td.id).unwrap().github.unwrap();
+        assert_eq!(link.number, 7, "sync fields still applied");
+        assert!(link.paused, "concurrent un-tick must be preserved");
     }
 }
