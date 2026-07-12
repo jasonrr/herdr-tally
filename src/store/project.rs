@@ -128,6 +128,15 @@ impl Project {
         self.dir.join("comments.json")
     }
 
+    /// The GitHub "owner/name" from this project's `origin` remote, or None
+    /// (no remote / not parseable). Uses the same `git` helper as project root.
+    // Unused outside tests until a later task wires the sync engine to it.
+    #[allow(dead_code)]
+    pub(crate) fn origin_repo(&self) -> Option<String> {
+        let url = git(&self.path, &["remote", "get-url", "origin"])?;
+        super::sync::parse_repo(&url)
+    }
+
     pub(crate) fn scratch_dir(&self) -> PathBuf {
         self.dir.join("scratchpads")
     }
@@ -297,5 +306,38 @@ mod tests {
         let dir = TempDir::new(); // no git init
         let p = resolve_project_in(root.path(), Some(&dir.path().to_string_lossy())).unwrap();
         assert_eq!(p.path, dir.path().canonicalize().unwrap());
+    }
+
+    #[test]
+    fn test_origin_repo_reads_remote() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+        let root = TempDir::new();
+        let dir = TempDir::new();
+        init_repo(dir.path());
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(dir.path())
+            .args(["remote", "add", "origin", "git@github.com:owner/name.git"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let p = resolve_project_in(root.path(), Some(&dir.path().to_string_lossy())).unwrap();
+        assert_eq!(p.origin_repo().as_deref(), Some("owner/name"));
+    }
+
+    #[test]
+    fn test_origin_repo_none_without_remote() {
+        if !git_available() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+        let root = TempDir::new();
+        let dir = TempDir::new();
+        init_repo(dir.path());
+        let p = resolve_project_in(root.path(), Some(&dir.path().to_string_lossy())).unwrap();
+        assert_eq!(p.origin_repo(), None);
     }
 }

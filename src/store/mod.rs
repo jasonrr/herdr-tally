@@ -6,6 +6,7 @@ mod ids;
 mod lock;
 mod project;
 mod scratchpads;
+mod sync;
 mod todos;
 
 #[cfg(test)]
