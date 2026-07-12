@@ -485,9 +485,11 @@ impl Gh for GhCli {
 
     fn create_comment(&self, repo: &str, number: i64, body: &str) -> Result<i64> {
         let path = format!("repos/{repo}/issues/{number}/comments");
-        // body on stdin via -f body=@- avoids arg-length/escaping issues.
+        // body on stdin via -F body=@- avoids arg-length/escaping issues. Must be
+        // -F (--field), not -f (--raw-field): only -F interprets @- as "read from
+        // stdin"; -f would post the literal string "@-".
         let out = run(
-            &["api", "--method", "POST", &path, "-f", "body=@-"],
+            &["api", "--method", "POST", &path, "-F", "body=@-"],
             Some(body),
         )?;
         let v: Value = serde_json::from_slice(&out)?;
