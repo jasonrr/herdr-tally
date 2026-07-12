@@ -121,7 +121,7 @@ pub(crate) fn plan_actions(
     acts
 }
 
-use super::errors::Result;
+use super::errors::{Error, Result};
 use super::todos::now;
 use super::{Project, TodoFilter};
 
@@ -301,6 +301,198 @@ fn sync_one(
     link.last_comment_pull = pass_start;
     p.update_github_link(&todo.id, link)?;
     Ok(())
+}
+
+use std::io::Write as _;
+use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
+
+use serde_json::Value;
+
+/// Run `gh <args>` with a 30s ceiling, optionally feeding `stdin`. Drains stdout
+/// on the calling thread (so a large comment list can't deadlock the pipe) while
+/// a watchdog thread SIGKILLs the child if it overruns.
+// ponytail: 30s hard ceiling via libc::kill watchdog; a hung gh can't wedge the
+// TUI's sync thread. Bump the constant if long-running gh calls ever appear.
+fn run(args: &[&str], stdin: Option<&str>) -> Result<Vec<u8>> {
+    let mut cmd = Command::new("gh");
+    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
+    if stdin.is_some() {
+        cmd.stdin(Stdio::piped());
+    }
+    let mut child = cmd.spawn()?;
+    if let (Some(s), Some(mut w)) = (stdin, child.stdin.take()) {
+        w.write_all(s.as_bytes())?; // drop(w) closes the pipe
+    }
+    let pid = child.id() as libc::pid_t;
+    let done = Arc::new(AtomicBool::new(false));
+    let watch_done = done.clone();
+    let watch = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while !watch_done.load(Ordering::Relaxed) {
+            if Instant::now() >= deadline {
+                unsafe { libc::kill(pid, libc::SIGKILL) };
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        false
+    });
+    let out = child.wait_with_output()?;
+    done.store(true, Ordering::Relaxed);
+    let killed = watch.join().unwrap_or(false);
+    if killed {
+        return Err(Error::Other(format!("gh {args:?} timed out")));
+    }
+    if !out.status.success() {
+        return Err(Error::Other(format!(
+            "gh {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    Ok(out.stdout)
+}
+
+/// The real GitHub boundary: shells out to `gh`.
+pub struct GhCli;
+
+impl Gh for GhCli {
+    fn auth_ok(&self) -> bool {
+        run(&["auth", "status"], None).is_ok()
+    }
+
+    fn create_issue(&self, repo: &str, title: &str, body: &str) -> Result<i64> {
+        let out = run(
+            &[
+                "issue", "create", "--repo", repo, "--title", title, "--body", body,
+            ],
+            None,
+        )?;
+        let url = String::from_utf8_lossy(&out);
+        // Last non-empty line is the issue URL: .../issues/<n>
+        let n = url
+            .split_whitespace()
+            .rev()
+            .find_map(|tok| tok.rsplit('/').next().and_then(|s| s.parse::<i64>().ok()))
+            .ok_or_else(|| Error::Other(format!("could not parse issue number from: {url}")))?;
+        Ok(n)
+    }
+
+    fn edit_issue(&self, repo: &str, number: i64, title: &str, body: &str) -> Result<()> {
+        run(
+            &[
+                "issue",
+                "edit",
+                &number.to_string(),
+                "--repo",
+                repo,
+                "--title",
+                title,
+                "--body",
+                body,
+            ],
+            None,
+        )?;
+        Ok(())
+    }
+
+    fn close_issue(&self, repo: &str, number: i64) -> Result<()> {
+        run(
+            &["issue", "close", &number.to_string(), "--repo", repo],
+            None,
+        )?;
+        Ok(())
+    }
+
+    fn reopen_issue(&self, repo: &str, number: i64) -> Result<()> {
+        run(
+            &["issue", "reopen", &number.to_string(), "--repo", repo],
+            None,
+        )?;
+        Ok(())
+    }
+
+    fn view_issue(&self, repo: &str, number: i64) -> Result<IssueSnapshot> {
+        let state_out = run(
+            &[
+                "issue",
+                "view",
+                &number.to_string(),
+                "--repo",
+                repo,
+                "--json",
+                "state",
+            ],
+            None,
+        )?;
+        let sv: Value = serde_json::from_slice(&state_out)?;
+        let state = match sv.get("state").and_then(Value::as_str) {
+            Some("CLOSED") => IssueState::Closed,
+            _ => IssueState::Open,
+        };
+
+        let cpath = format!("repos/{repo}/issues/{number}/comments");
+        let comments_out = run(&["api", &cpath], None)?;
+        let cv: Value = serde_json::from_slice(&comments_out)?;
+        let comments = cv
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|c| {
+                        Some(GhComment {
+                            id: c.get("id")?.as_i64()?,
+                            author: c.get("user")?.get("login")?.as_str()?.to_string(),
+                            created: c.get("created_at")?.as_str()?.to_string(),
+                            body: c
+                                .get("body")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Closer login is best-effort; degrade to "" (→ bare `gh` attribution).
+        let closed_by = if state == IssueState::Closed {
+            closer_login(repo, number).unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        Ok(IssueSnapshot {
+            state,
+            closed_by,
+            comments,
+        })
+    }
+
+    fn create_comment(&self, repo: &str, number: i64, body: &str) -> Result<i64> {
+        let path = format!("repos/{repo}/issues/{number}/comments");
+        // body on stdin via -f body=@- avoids arg-length/escaping issues.
+        let out = run(
+            &["api", "--method", "POST", &path, "-f", "body=@-"],
+            Some(body),
+        )?;
+        let v: Value = serde_json::from_slice(&out)?;
+        v.get("id")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| Error::Other("gh comment create returned no id".to_string()))
+    }
+}
+
+/// Best-effort GH login of whoever last closed the issue (issue events API).
+fn closer_login(repo: &str, number: i64) -> Option<String> {
+    let path = format!("repos/{repo}/issues/{number}/events");
+    let out = run(&["api", &path], None).ok()?;
+    let v: Value = serde_json::from_slice(&out).ok()?;
+    v.as_array()?
+        .iter()
+        .rfind(|e| e.get("event").and_then(Value::as_str) == Some("closed"))
+        .and_then(|e| e.get("actor")?.get("login")?.as_str().map(str::to_string))
 }
 
 #[cfg(test)]
@@ -643,6 +835,33 @@ mod tests {
         let snap = IssueSnapshot::default(); // Open, closed_by ""
         let acts = plan_actions(&t, &link, &[], &snap);
         assert_eq!(acts, vec![Action::ReopenTodo { by: String::new() }]);
+    }
+
+    #[test]
+    fn test_run_smoke_no_panic() {
+        // `gh` may or may not be installed in CI; either a clean stdout or a spawn
+        // error is fine. This only exercises the run() plumbing (spawn, watchdog
+        // wiring, pipe drain) and asserts it neither panics nor hangs.
+        let _ = super::run(&["--version"], None);
+    }
+
+    #[ignore = "live: needs gh auth + a scratch repo; run manually"]
+    #[test]
+    fn test_ghcli_live_roundtrip() {
+        // Set TALLY_SCRATCH_REPO=owner/name to a throwaway repo you own.
+        let repo = std::env::var("TALLY_SCRATCH_REPO").expect("set TALLY_SCRATCH_REPO");
+        let gh = GhCli;
+        assert!(gh.auth_ok(), "gh not authed");
+        let n = gh.create_issue(&repo, "tally smoke", "body").unwrap();
+        gh.edit_issue(&repo, n, "tally smoke edited", "body2")
+            .unwrap();
+        let cid = gh.create_comment(&repo, n, "hello from tally").unwrap();
+        assert!(cid > 0);
+        let snap = gh.view_issue(&repo, n).unwrap();
+        assert!(snap.comments.iter().any(|c| c.id == cid));
+        gh.close_issue(&repo, n).unwrap();
+        let snap = gh.view_issue(&repo, n).unwrap();
+        assert_eq!(snap.state, IssueState::Closed);
     }
 
     #[test]
