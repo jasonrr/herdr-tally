@@ -14,6 +14,7 @@ use crate::store::{Project, resolve_project, resolve_project_in};
 mod comments;
 mod render;
 mod scratchpads;
+mod sync;
 mod todos;
 
 /// `tally todos …` entry: real store root, stdout.
@@ -29,6 +30,16 @@ pub fn scratchpads(args: &[String]) -> ExitCode {
 /// `tally comments …` entry: real store root, stdout.
 pub fn comments(args: &[String]) -> ExitCode {
     exit(comments::run(args, None, &mut io::stdout()))
+}
+
+/// `tally sync …` entry: real store root, real gh boundary, stdout.
+pub fn sync(args: &[String]) -> ExitCode {
+    exit(sync::run(
+        args,
+        None,
+        &crate::store::GhCli,
+        &mut io::stdout(),
+    ))
 }
 
 /// Only main turns a code into a process exit — the run functions return codes
