@@ -216,16 +216,16 @@ impl Project {
         tags: Vec<String>,
     ) -> Result<Todo> {
         let priority = if priority.is_empty() {
-            "medium"
+            "medium".to_string()
         } else {
-            priority
+            normalize_priority(priority)?
         };
         let td = Todo {
             id: new_id("t_"),
             title: title.to_string(),
             body: body.to_string(),
             status: "open".to_string(),
-            priority: priority.to_string(),
+            priority,
             tags,
             blockers: Vec::new(),
             lock: None,
@@ -354,7 +354,7 @@ impl Project {
                 t.body = v;
             }
             if let Some(v) = u.priority {
-                t.priority = v;
+                t.priority = normalize_priority(&v)?;
             }
             if let Some(v) = u.status {
                 t.status = normalize_status(&v)?;
@@ -483,6 +483,20 @@ fn normalize_status(raw: &str) -> Result<String> {
     }
 }
 
+/// Same story as normalize_status for priority: prio_rank sorts any unknown
+/// value alongside "high" (todos.rs), so a typo like "urgent" silently jumps
+/// the queue. User input is normalized (case, surrounding space) and rejected
+/// unless it's one of the three ranks.
+fn normalize_priority(raw: &str) -> Result<String> {
+    let s = raw.trim().to_lowercase();
+    match s.as_str() {
+        "high" | "medium" | "low" => Ok(s),
+        _ => Err(Error::Other(format!(
+            "invalid priority {raw:?}: expected high, medium, or low"
+        ))),
+    }
+}
+
 fn blocked_against(t: &Todo, all: &[Todo]) -> bool {
     let status: HashMap<&str, &str> = all
         .iter()
@@ -562,6 +576,9 @@ mod tests {
         assert!(normalize_status("closed").is_err());
         assert!(normalize_status("done").is_err());
 
+        assert_eq!(normalize_priority(" HIGH ").unwrap(), "high");
+        assert!(normalize_priority("urgent").is_err());
+
         let p = new_project();
         let td = p.create_todo("x", "", "", Vec::new()).unwrap();
         let mut u = TodoUpdate::default();
@@ -569,6 +586,8 @@ mod tests {
         assert!(p.update_todo(&td.id, u).is_err());
         // The rejected update left the stored status untouched.
         assert_eq!(p.get_todo(&td.id).unwrap().status, "open");
+        // create rejects a bogus priority outright
+        assert!(p.create_todo("y", "", "urgent", Vec::new()).is_err());
     }
 
     #[test]
