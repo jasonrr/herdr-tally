@@ -357,7 +357,7 @@ impl Project {
                 t.priority = v;
             }
             if let Some(v) = u.status {
-                t.status = v;
+                t.status = normalize_status(&v)?;
             }
             if let Some(v) = u.tags {
                 t.tags = v;
@@ -466,6 +466,23 @@ impl Project {
     }
 }
 
+/// The only statuses the rest of tally understands: the list filter, blocker
+/// checks, and transition messages all key on the literal "completed". Status
+/// is free-form on disk, but user input funnels through update_todo → here so a
+/// typo like "closed" can't create a ghost that displays as done yet never
+/// leaves the open view (only status=="completed" is filtered out). Formatting
+/// is normalized (case, surrounding space, space/hyphen → underscore); anything
+/// that still isn't canonical is rejected rather than guessed at.
+fn normalize_status(raw: &str) -> Result<String> {
+    let s = raw.trim().to_lowercase().replace([' ', '-'], "_");
+    match s.as_str() {
+        "open" | "in_progress" | "completed" => Ok(s),
+        _ => Err(Error::Other(format!(
+            "invalid status {raw:?}: expected open, in_progress, or completed"
+        ))),
+    }
+}
+
 fn blocked_against(t: &Todo, all: &[Todo]) -> bool {
     let status: HashMap<&str, &str> = all
         .iter()
@@ -533,6 +550,25 @@ mod tests {
         assert_eq!(td.priority, "medium");
         let got = p.get_todo(&td.id).unwrap();
         assert_eq!(got.title, "Rotate tokens");
+    }
+
+    #[test]
+    fn test_status_normalized_and_rejected() {
+        assert_eq!(normalize_status(" Open ").unwrap(), "open");
+        assert_eq!(normalize_status("In-Progress").unwrap(), "in_progress");
+        assert_eq!(normalize_status("in progress").unwrap(), "in_progress");
+        assert_eq!(normalize_status("COMPLETED").unwrap(), "completed");
+        // "closed" was the ghost-maker: not canonical, so it's rejected outright.
+        assert!(normalize_status("closed").is_err());
+        assert!(normalize_status("done").is_err());
+
+        let p = new_project();
+        let td = p.create_todo("x", "", "", Vec::new()).unwrap();
+        let mut u = TodoUpdate::default();
+        u.status = Some("closed".into());
+        assert!(p.update_todo(&td.id, u).is_err());
+        // The rejected update left the stored status untouched.
+        assert_eq!(p.get_todo(&td.id).unwrap().status, "open");
     }
 
     #[test]

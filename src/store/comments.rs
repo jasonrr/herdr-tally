@@ -396,7 +396,8 @@ mod tests {
         tp.update_todo(&t.id, u).unwrap();
         let e = events(&tp);
         assert_eq!(e.len(), 1);
-        assert!(e[0].contains("in progress"), "got {:?}", e);
+        // input "in progress" is normalized to the canonical "in_progress"
+        assert!(e[0].contains("in_progress"), "got {:?}", e);
         // completion → "marked done"
         tp.complete_todo(&t.id, false).unwrap();
         assert!(events(&tp).iter().any(|x| x == "marked done"));
