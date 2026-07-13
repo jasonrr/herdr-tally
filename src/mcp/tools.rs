@@ -280,7 +280,7 @@ fn registry() -> Vec<Tool> {
                 require_revision(a, "scratchpad_edit")?;
                 val(p.edit_scratchpad(&a.id, a.target.clone(), &a.content, a.rev())?)
             } },
-        Tool { name: "scratchpad_find", desc: "Search a scratchpad for a literal substring.",
+        Tool { name: "scratchpad_find", desc: "Grep within ONE scratchpad's text (needs its id + a query). To fetch a pad by id use scratchpad_read; to locate pads use scratchpad_list.",
             schema: obj(req(&["id", "query"]), json!({"id": prop("string", ""), "query": prop("string", ""), "scope": prop("string", "headings|content|all"), "case_sensitive": prop("boolean", ""), "context_lines": prop("integer", "")})),
             run: |p, a| val(p.find_in_scratchpad(&a.id, &a.query, or_default(&a.scope, "all"), a.case_sensitive, a.context_lines)?) },
         Tool { name: "scratchpad_tail", desc: "Return the last N lines with total line count.",
