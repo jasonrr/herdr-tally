@@ -15,6 +15,8 @@
 follow-ups a project accumulates outlive any single session. Shipped as a
 [herdr](https://herdr.dev) plugin.
 
+![The tally TUI — todos, scratchpads, and a read-only plans tab, with live GitHub-issue sync](docs/media/hero.gif)
+
 ## Why "tally"?
 
 A drover walking a flock through a gate doesn't trust memory. They carry a
@@ -36,6 +38,12 @@ away, kept in your head, or in a file the next agent never opens. tally is that
 place: one project-scoped ledger you and your agents both write to and read back — a
 two-way ledger, not a one-way log. The trail of the work outlives any single
 session, and you're both looking at the same page.
+
+![An agent, in a separate session, files a follow-up and comments on the same store; the TUI picks up both within two seconds](docs/media/two-way.gif)
+
+*Left: your TUI. Right: an agent working the same project. It re-reads the store
+every couple of seconds, so the agent's edits land in front of you live — and
+yours land in front of it.*
 
 You keep four kinds of artifact in it:
 
@@ -156,6 +164,44 @@ The TUI carries the same work across tabs — todos, scratchpads, and a read-onl
 > Plans default to `docs/superpowers/{specs,plans}` and `docs/solutions`. To browse
 > other dirs, list them (one per line, relative to the repo root) in a `plan-paths`
 > file under your tally config dir (`$XDG_CONFIG_HOME/tally`, else `~/.config/tally`).
+
+## Sync todos with GitHub issues
+
+A todo can be mirrored to a GitHub issue and kept in step with it. Opt in
+per-todo — nothing syncs unless you ask:
+
+```bash
+tally todos update <id> --github on     # or press G on the todo in the TUI
+```
+
+The repo comes from the project's `origin` remote, and syncing needs the
+[`gh` CLI](https://cli.github.com) authenticated (`gh auth login`). The first
+pass opens the issue; every pass after that reconciles the two, both ways:
+
+- **tally → GitHub** — editing a todo's title/body updates the issue; completing
+  or reopening a todo closes or reopens it; a comment you add is posted as an
+  issue comment.
+- **GitHub → tally** — closing or reopening the issue completes or reopens the
+  todo; a new issue comment is imported onto it. Both are attributed to
+  `gh:<login>`, so you can see it came from GitHub and who did it.
+
+When both sides changed since the last pass, the newer wins: tally wins if you
+edited the todo, otherwise GitHub's state is pulled down.
+
+Sync runs when you ask, and on its own while a TUI pane is open:
+
+```bash
+tally sync            # one reconcile pass over every linked todo
+tally sync --json     # machine-readable SyncReport
+```
+
+The TUI reconciles every 60s in the background. Synced todos are marked `⇅` and
+the footer shows `↕ N synced`:
+
+![The todos tab: a ⇅ marks the synced todo, and the footer reads "↕ 1 synced"](docs/media/todos.png)
+
+Pause a todo with `--github off` — its issue link and number are kept, it just
+stops reconciling. Turning it back `on` resumes where it left off.
 
 ## For agents
 
