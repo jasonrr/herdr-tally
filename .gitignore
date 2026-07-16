@@ -2,3 +2,6 @@
 /bin
 
 .demo/
+
+# macOS
+.DS_Store

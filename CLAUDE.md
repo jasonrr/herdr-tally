@@ -68,7 +68,7 @@ and the binary is then SIGKILLed at exec (`Killed: 9`, exit 137, no output) even
 though `codesign -v` reports "valid on disk". A fresh inode (rm then cp) avoids it;
 `codesign -f -s - bin/tally` also fixes an already-broken copy.
 
-## herdr integration gotchas (verified live against herdr 0.7.3)
+## herdr integration gotchas (verified live against herdr 0.7.4)
 
 - Panes open with cwd = the user's project; actions run with cwd = the plugin root.
   Pane commands must locate the binary via `$HERDR_PLUGIN_ROOT` (see manifest).
@@ -84,6 +84,10 @@ though `codesign -v` reports "valid on disk". A fresh inode (rm then cp) avoids 
   primitive.
 - Test panes in a throwaway `herdr workspace create --no-focus` +
   `herdr wait output <pane> --match ... --timeout`, then `workspace close`.
+- **On a herdr version bump, run `scripts/verify-herdr.sh`** (PASS/FAIL over every
+  surface tally uses; `--bounce` restarts the server first, run detached). It's what
+  re-verifies the pin above — see the `verify-herdr-version` skill. Gotcha it encodes:
+  `pane list` emits JSON by default and *rejects* `--json`.
 
 ## macOS-only for now
 
