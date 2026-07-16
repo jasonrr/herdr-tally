@@ -351,6 +351,14 @@ impl App {
             && !self.read_id.is_empty()
         {
             let id = self.read_id.clone();
+            // The viewed item can vanish from under a Read view — an agent
+            // deletes it, or a spacebar-complete drops it out of the list when
+            // hide_completed is on. draw_read blanks the pane when read_id no
+            // longer resolves, so fall back to the list instead. Edit keeps its
+            // buffer (don't discard in-progress typing on a delete).
+            if self.mode == Mode::Read && !self.read_item_exists(&id) {
+                self.mode = Mode::List;
+            }
             self.pin_cursor_to(&id);
         } else if let Some(id) = list_sel {
             self.pin_cursor_to(&id);
@@ -444,6 +452,21 @@ impl App {
         };
         if let Some(i) = pos {
             self.cursor[self.tab.idx()] = i;
+        }
+    }
+
+    /// True if `read_id` still resolves to a live item in the full (unfiltered)
+    /// lists — the same resolution draw_read's title uses. Goes false once the
+    /// item is deleted or (for todos) filtered out of self.todos by
+    /// hide_completed.
+    fn read_item_exists(&self, id: &str) -> bool {
+        match self.tab {
+            Tab::Todos => self.todos.iter().any(|t| t.id == id),
+            Tab::Scratchpads => self.pads.iter().any(|s| s.id == id),
+            Tab::Plans => self
+                .plans
+                .iter()
+                .any(|d| d.abs_path.to_string_lossy() == id),
         }
     }
 
@@ -1863,6 +1886,53 @@ mod tests {
         assert_eq!(f.app.todos[0].title, "open");
         f.app.on_key(key(KeyCode::Char('c'))); // show again
         assert_eq!(f.app.todos.len(), 2, "completed restored");
+    }
+
+    #[test]
+    fn read_mode_falls_back_to_list_when_viewed_todo_completed_and_hidden() {
+        // Spacebar-complete a todo while viewing it with hide_completed on: it
+        // drops out of self.todos, so draw_read's title can't resolve read_id
+        // and the pane blanks. reload() must return us to the list instead.
+        let mut f = Fixture::new(Tab::Todos);
+        f.store().create_todo("keep", "", "p2", Vec::new()).unwrap();
+        let t = f
+            .store()
+            .create_todo("view", "body", "p2", Vec::new())
+            .unwrap();
+        f.app.reload();
+        f.app.hide_completed = true;
+        f.app.pin_cursor_to(&t.id);
+        f.app.enter_read();
+        assert_eq!(f.app.mode, Mode::Read);
+        f.app.on_key(key(KeyCode::Char(' '))); // complete -> hidden -> vanishes
+        assert_eq!(
+            f.app.mode,
+            Mode::List,
+            "vanished item -> list, not blank pane"
+        );
+    }
+
+    #[test]
+    fn read_mode_falls_back_to_list_when_viewed_item_deleted() {
+        // An agent deletes the item out from under an open detail view; the next
+        // reload picks it up and must drop back to the list rather than blank.
+        let mut f = Fixture::new(Tab::Todos);
+        f.store().create_todo("keep", "", "p2", Vec::new()).unwrap();
+        let t = f
+            .store()
+            .create_todo("view", "body", "p2", Vec::new())
+            .unwrap();
+        f.app.reload();
+        f.app.pin_cursor_to(&t.id);
+        f.app.enter_read();
+        assert_eq!(f.app.mode, Mode::Read);
+        f.store().delete_todo(&t.id).unwrap();
+        f.app.reload();
+        assert_eq!(
+            f.app.mode,
+            Mode::List,
+            "deleted item -> list, not blank pane"
+        );
     }
 
     #[test]
