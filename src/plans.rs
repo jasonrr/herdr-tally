@@ -61,6 +61,27 @@ fn config_dir() -> Option<PathBuf> {
     )
 }
 
+fn config_file() -> Option<PathBuf> {
+    config_dir().map(|d| d.join("plan-paths"))
+}
+
+/// Editable text shown by the TUI: one configured plan dir per line.
+pub fn load_plan_paths_text() -> String {
+    let mut s = load_plan_paths().join("\n");
+    s.push('\n');
+    s
+}
+
+/// Persists the TUI-edited plan dirs to `<config>/plan-paths`.
+pub fn save_plan_paths(text: &str) -> std::io::Result<()> {
+    let path = config_file()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no config directory"))?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, text)
+}
+
 /// Loads path list from `<dir>/plan-paths`, falling back to the legacy
 /// `<dir>/doc-paths`, then to `defaults()`. Split out for testing.
 fn load_plan_paths_from(dir: &Path) -> Vec<String> {

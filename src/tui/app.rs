@@ -635,8 +635,11 @@ impl App {
                     self.enter_read();
                 }
             }
+            KeyCode::Char('y') => self.yank(),
+            KeyCode::Char('Y') => self.yank_content(),
             KeyCode::Char('n') if self.tab != Tab::Plans => self.begin_edit_new(),
-            KeyCode::Char('e') if self.tab != Tab::Plans => self.begin_edit(),
+            KeyCode::Char('e') if self.tab == Tab::Plans => self.begin_edit_plan_paths(),
+            KeyCode::Char('e') => self.begin_edit(),
             KeyCode::Char('p') if self.tab == Tab::Todos => {
                 self.cycle_priority();
                 self.reload();
@@ -1186,6 +1189,18 @@ impl App {
     /// Opens the unified editor on a brand-new, unsaved item. save_edit keys
     /// off the empty edit_id to create rather than update; leaving without
     /// typing persists nothing, so there is no orphan blank item.
+    pub fn begin_edit_plan_paths(&mut self) {
+        self.title_ed = new_editor("Plan paths (one directory per line)", true);
+        self.body_ed = new_editor(&plans::load_plan_paths_text(), false);
+        self.edit_focus = Focus::Body;
+        self.edit_orig_title = editor_text(&self.title_ed);
+        self.edit_orig_body = editor_text(&self.body_ed);
+        self.edit_id = "plan-paths".to_string();
+        self.edit_return = Mode::List;
+        self.status.clear();
+        self.mode = Mode::Edit;
+    }
+
     pub fn begin_edit_new(&mut self) {
         self.title_ed = new_editor("", true);
         self.body_ed = new_editor("", false);
@@ -1233,6 +1248,17 @@ impl App {
             .collect::<Vec<_>>()
             .join(" ");
         let body = editor_text(&self.body_ed);
+        if self.tab == Tab::Plans {
+            match plans::save_plan_paths(&body) {
+                Ok(()) => {
+                    self.status.clear();
+                    self.mode = Mode::List;
+                    self.reload();
+                }
+                Err(e) => self.status = format!("save failed: {e}"),
+            }
+            return;
+        }
         if self.edit_id.is_empty() {
             self.save_new(&title, &body);
             return;
@@ -1309,10 +1335,28 @@ impl App {
     }
 
     fn yank_content_target(&self) -> Option<String> {
-        if self.read_body.is_empty() {
-            None
-        } else {
-            Some(self.read_body.clone())
+        if self.mode == Mode::Read {
+            return (!self.read_body.is_empty()).then(|| self.read_body.clone());
+        }
+        self.selected_content().ok().filter(|s| !s.is_empty())
+    }
+
+    fn selected_content(&self) -> Result<String, String> {
+        let Some(id) = self.selected_id() else {
+            return Err("nothing selected".to_string());
+        };
+        match self.tab {
+            Tab::Todos => self
+                .visible_todos()
+                .get(self.cursor[Tab::Todos.idx()])
+                .map(|t| t.body.clone())
+                .ok_or_else(|| "nothing selected".to_string()),
+            Tab::Scratchpads => self
+                .p
+                .read_scratchpad(&id, "full", "", 0, 0)
+                .map(|(s, _)| s.content)
+                .map_err(|e| e.to_string()),
+            Tab::Plans => plans::read(std::path::Path::new(&id)).map_err(|e| e.to_string()),
         }
     }
 
@@ -1966,12 +2010,18 @@ mod tests {
         let mut app = test_app_with_scratchpad("Notes", "line one\nline two");
         app.tab = Tab::Scratchpads;
         app.reload();
+        assert_eq!(app.yank_id_target(), app.selected_id());
+        assert_eq!(
+            app.yank_content_target().as_deref(),
+            Some("line one\nline two"),
+            "list mode Y copies selected content"
+        );
         app.enter_read(); // loads read_body
         assert_eq!(
             app.yank_content_target().as_deref(),
-            Some("line one\nline two")
+            Some("line one\nline two"),
+            "read mode Y copies open content"
         );
-        assert_eq!(app.yank_id_target(), app.selected_id());
     }
 
     /// Pins the load-bearing assumption behind drag-to-copy: a clipboard set via

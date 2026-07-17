@@ -812,9 +812,9 @@ fn footer(app: &App) -> &'static str {
     match app.mode {
         // Top ~6 commands only; `?` opens the full list (draw_help).
         Mode::List => match app.tab {
-            Tab::Todos => "↑↓ · enter · n new · space done · G github · e edit · d del · ? help",
-            Tab::Scratchpads => "↑↓ · enter · n new · e edit · d del · ? help",
-            Tab::Plans => "↑↓ · enter · / filter · r · ? help",
+            Tab::Todos => "↑↓ · enter · space done · y/Y copy · e edit · d del · ? help",
+            Tab::Scratchpads => "↑↓ · enter · n new · y id · Y copy · e edit · d del · ? help",
+            Tab::Plans => "↑↓ · enter · y id · Y copy · / filter · e paths · ? help",
         },
         Mode::Read => match app.tab {
             Tab::Todos => {
@@ -826,6 +826,7 @@ fn footer(app: &App) -> &'static str {
         Mode::Confirm => "y confirm · n/esc cancel",
         Mode::Edit => match app.tab {
             Tab::Todos => "tab title/body · ctrl+d save · esc discard · ctrl+p prio · ctrl+t done",
+            Tab::Plans => "edit paths · ctrl+d save · esc discard",
             _ => "tab title/body · ctrl+d save · esc discard",
         },
         Mode::DiscardConfirm => "y discard · n/esc keep editing",
@@ -843,7 +844,8 @@ const HELP_ROWS: &[(&str, &str)] = &[
     ("↑↓ j k", "move"),
     ("enter o", "open / read"),
     ("n", "new"),
-    ("e", "edit"),
+    ("e", "edit / plan paths"),
+    ("y  Y", "copy id · copy body"),
     ("space", "toggle done (todos)"),
     ("p", "cycle priority (todos)"),
     ("G", "toggle GitHub sync (todos)"),
