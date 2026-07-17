@@ -30,5 +30,16 @@ NEXT=$next perl -0pi -e 's/(\[package\]\nname = "tally"\nversion = ")[^"]+/${1}$
 NEXT=$next perl -0pi -e 's/(^version = ")[^"]+/${1}$ENV{NEXT}/m' herdr-plugin.toml
 NEXT=$next perl -0pi -e 's/(name = "tally"\nversion = ")[^"]+/${1}$ENV{NEXT}/' Cargo.lock
 
-echo "bumped tally $current -> $next"
+cargo build --release
+mkdir -p bin
+rm -f bin/tally
+/bin/cp target/release/tally bin/tally
+pkill -f 'bin/tally tui' 2>/dev/null || true
+
+echo "bumped tally $current -> $next and rebuilt bin/tally"
+if pgrep -fl 'bin/tally mcp' >/tmp/tally-release-mcp.$$; then
+  echo "reconnect MCP servers still running old code:"
+  cat /tmp/tally-release-mcp.$$
+fi
+rm -f /tmp/tally-release-mcp.$$
 echo "next: git diff && git commit -am 'Release v$next' && git tag v$next && git push --follow-tags"
