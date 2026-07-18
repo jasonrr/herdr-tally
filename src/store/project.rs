@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::errors::Result;
+use super::errors::{Error, Result};
 use super::todos::now;
 
 pub struct Project {
@@ -64,7 +64,21 @@ pub fn resolve_project(override_dir: Option<&str>) -> Result<Project> {
 pub fn resolve_project_in(store_root: &Path, override_dir: Option<&str>) -> Result<Project> {
     let dir = match override_dir {
         Some(d) => PathBuf::from(d),
-        None => std::env::current_dir()?,
+        // ENOENT here means the process's cwd was deleted out from under it
+        // (e.g. a herdr worktree removed while its stdio MCP server kept
+        // running). The bare "No such file or directory" reads as "no store",
+        // so name the real cause and the fix instead.
+        None => std::env::current_dir().map_err(|e| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                Error::Other(
+                    "tally's working directory no longer exists (was it a deleted worktree?); \
+                     reconnect the tally MCP server, or pass an absolute `project` path"
+                        .into(),
+                )
+            } else {
+                Error::Io(e)
+            }
+        })?,
     };
     let mut abs = std::path::absolute(&dir)?;
     if let Some(root) = git_project_root(&abs) {
