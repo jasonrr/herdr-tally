@@ -1,6 +1,6 @@
 id = "tally"
 name = "tally"
-version = "0.1.4"
+version = "0.1.5"
 description = "Project-scoped todos & scratchpads for you and your agents."
 min_herdr_version = "0.7.0"
 platforms = ["macos", "linux"]
