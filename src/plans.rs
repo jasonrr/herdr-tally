@@ -3,7 +3,7 @@
 // lists/reads the markdown under them. Stdlib only, mirroring the Go package.
 use std::collections::HashSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
 /// Browsed when no plan-paths config exists, relative to the project root.
@@ -129,12 +129,27 @@ pub fn list(root: &Path, paths: &[String]) -> Vec<Plan> {
     let mut out: Vec<Plan> = Vec::new();
     let mut seen: HashSet<PathBuf> = HashSet::new();
     for rel in paths {
+        // Skip paths that escape the project root. `Path::join` REPLACES the base
+        // when `rel` is absolute, so a configured "/" would walk the whole drive;
+        // a `..` component would climb out of the project. Only plain relative
+        // paths are browsed. (Lexical check — no FS/symlink resolution needed.)
+        if !is_under_root(rel) {
+            continue;
+        }
         let base = root.join(rel);
         walk(&base, root, &mut seen, &mut out);
     }
     // Stable sort, most-recent-first (Go: sort.SliceStable with ModTime.After).
     out.sort_by(|a, b| b.mod_time.cmp(&a.mod_time));
     out
+}
+
+/// True only for plain relative paths (no root/prefix, no `..`), i.e. paths that
+/// stay under the project root once joined. `.` components are fine.
+fn is_under_root(rel: &str) -> bool {
+    Path::new(rel)
+        .components()
+        .all(|c| matches!(c, Component::CurDir | Component::Normal(_)))
 }
 
 // Recursive directory walk mirroring Go's filepath.WalkDir: lexical order,
@@ -364,6 +379,33 @@ mod tests {
             .find(|d| d.rel_path == "docs/notes/note.md")
             .unwrap();
         assert_eq!(note.heading, "plain first line");
+    }
+
+    #[test]
+    fn list_skips_paths_outside_root() {
+        let dir = TempDir::new();
+        let root = dir.path();
+        write_at(&root.join("docs/plans/a.md"), "# A\n", SystemTime::now());
+        // A file outside root that "/" or ".." would otherwise reach.
+        write_at(
+            &root.join("..").join("outside.md"),
+            "# leak\n",
+            SystemTime::now(),
+        );
+
+        let paths = vec![
+            "docs/plans".to_string(),
+            "/".to_string(),   // absolute: would walk the whole drive
+            "../".to_string(), // climbs out of root
+            "docs/../../outside".to_string(),
+        ];
+        let got = list(root, &paths);
+        assert_eq!(
+            got.len(),
+            1,
+            "only the contained path is browsed, got {got:?}"
+        );
+        assert_eq!(got[0].rel_path, "docs/plans/a.md");
     }
 
     #[test]
