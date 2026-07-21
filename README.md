@@ -162,8 +162,14 @@ The TUI carries the same work across tabs — todos, scratchpads, and a read-onl
 `Y` to copy an item, `?` for help.
 
 > Plans default to `docs/superpowers/{specs,plans}` and `docs/solutions`. To browse
-> other dirs, list them (one per line, relative to the repo root) in a `plan-paths`
+> other dirs, put patterns (one per line, relative to the repo root) in a `plan-paths`
 > file under your tally config dir (`$XDG_CONFIG_HOME/tally`, else `~/.config/tally`).
+> Each line is a **gitignore glob with the sense reversed**: a match *includes* a
+> `.md` file, a later `!` line *excludes* it, last match wins. So `docs/*-plans/`
+> picks sibling folders without listing each, `**/design/*.md` matches at any depth,
+> and `docs/**` + `!docs/archive/**` includes everything under `docs/` but the archive.
+> A bare `docs/plans` still pulls every `.md` beneath it. `.gitignore`'d files never
+> surface.
 
 ## Sync todos with GitHub issues
 

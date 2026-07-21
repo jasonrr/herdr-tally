@@ -1,9 +1,11 @@
 // Port of internal/docs/{config.go,list.go}. Filesystem source for the TUI's
 // read-only Plans tab: it loads a per-user list of plan directories and
 // lists/reads the markdown under them. Stdlib only, mirroring the Go package.
-use std::collections::HashSet;
+use ignore::Match;
+use ignore::WalkBuilder;
+use ignore::gitignore::GitignoreBuilder;
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 /// Browsed when no plan-paths config exists, relative to the project root.
@@ -122,84 +124,77 @@ pub fn load_plan_paths() -> Vec<String> {
     }
 }
 
-/// Walks each of `paths` (joined to `root`) collecting *.md files, sorted
-/// most-recently-modified first. Missing or unreadable dirs are skipped. Port of
-/// Go's `List`.
+/// Surfaces the `.md` files under `root` selected by `paths`, sorted
+/// most-recently-modified first. Each line in `paths` is a gitignore-style glob
+/// with its sense inverted (reverse gitignore): a match *includes* the file, a
+/// later `!` pattern *excludes* it, no match means not surfaced. We build a
+/// `Gitignore` from the same lines and invert its verdict per file
+/// (`Ignore => include`, `Whitelist => exclude`, `None => exclude`) using
+/// `matched_path_or_any_parents`, so a matched *parent directory* (a bare
+/// `docs/plans` or `docs/*-plans/`) includes every `.md` beneath it — the
+/// back-compat behavior overrides alone don't give. The walk is rooted at
+/// `root` and honors `.gitignore`, so it can't escape the repo or descend
+/// `node_modules`/`target`/`.git`.
 pub fn list(root: &Path, paths: &[String]) -> Vec<Plan> {
-    let mut out: Vec<Plan> = Vec::new();
-    let mut seen: HashSet<PathBuf> = HashSet::new();
-    for rel in paths {
-        // Skip paths that escape the project root. `Path::join` REPLACES the base
-        // when `rel` is absolute, so a configured "/" would walk the whole drive;
-        // a `..` component would climb out of the project. Only plain relative
-        // paths are browsed. (Lexical check — no FS/symlink resolution needed.)
-        if !is_under_root(rel) {
-            continue;
-        }
-        let base = root.join(rel);
-        walk(&base, root, &mut seen, &mut out);
+    let mut gb = GitignoreBuilder::new(root);
+    for line in paths {
+        // Normal gitignore sense here; we invert the verdict below. Skip lines
+        // the builder rejects (malformed globs) rather than aborting the list.
+        let _ = gb.add_line(None, line);
     }
-    // Stable sort, most-recent-first (Go: sort.SliceStable with ModTime.After).
-    out.sort_by(|a, b| b.mod_time.cmp(&a.mod_time));
-    out
-}
-
-/// True only for plain relative paths (no root/prefix, no `..`), i.e. paths that
-/// stay under the project root once joined. `.` components are fine.
-fn is_under_root(rel: &str) -> bool {
-    Path::new(rel)
-        .components()
-        .all(|c| matches!(c, Component::CurDir | Component::Normal(_)))
-}
-
-// Recursive directory walk mirroring Go's filepath.WalkDir: lexical order,
-// errors skipped, symlinked dirs not followed (DirEntry file_type does not
-// dereference).
-fn walk(dir: &Path, root: &Path, seen: &mut HashSet<PathBuf>, out: &mut Vec<Plan>) {
-    let read = match fs::read_dir(dir) {
-        Ok(r) => r,
-        Err(_) => return, // skip missing/unreadable
+    let selector = match gb.build() {
+        Ok(g) => g,
+        Err(_) => return Vec::new(), // malformed set => empty, not a panic
     };
-    let mut entries: Vec<fs::DirEntry> = read.filter_map(Result::ok).collect();
-    entries.sort_by_key(|e| e.file_name());
-    for entry in entries {
+
+    let mut out: Vec<Plan> = Vec::new();
+    let walk = WalkBuilder::new(root)
+        .hidden(true) // skip dotfiles/dirs
+        .git_ignore(true) // never descend .gitignore'd trees (node_modules, target)
+        .require_git(false) // honor .gitignore even outside a checked-out repo
+        .git_global(false) // stay hermetic: ignore the user's global gitignore
+        .parents(false) // don't read .gitignore above the repo root
+        .build();
+    for entry in walk.filter_map(Result::ok) {
+        if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+            continue;
+        }
         let p = entry.path();
-        let ft = match entry.file_type() {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-        if ft.is_dir() {
-            walk(&p, root, seen, out);
+        // Reverse gitignore: an Ignore verdict (pattern matched) means include.
+        if !matches!(
+            selector.matched_path_or_any_parents(p, false),
+            Match::Ignore(_)
+        ) {
             continue;
         }
-        if !entry
+        let is_md = p
             .file_name()
-            .to_string_lossy()
-            .to_lowercase()
-            .ends_with(".md")
-        {
+            .and_then(|n| n.to_str())
+            .map(|n| n.to_lowercase().ends_with(".md"))
+            .unwrap_or(false);
+        if !is_md {
             continue;
         }
-        if !seen.insert(p.clone()) {
-            continue;
-        }
-        let meta = match entry.metadata() {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        let mod_time = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        let mod_time = entry
+            .metadata()
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .unwrap_or(SystemTime::UNIX_EPOCH);
         let rel_path = p
             .strip_prefix(root)
             .map(|r| r.to_string_lossy().into_owned())
             .unwrap_or_else(|_| p.to_string_lossy().into_owned());
-        let heading = first_heading(&p);
+        let heading = first_heading(p);
         out.push(Plan {
             rel_path,
-            abs_path: p,
+            abs_path: p.to_path_buf(),
             heading,
             mod_time,
         });
     }
+    // Most-recent-first (Go: sort.SliceStable with ModTime.After).
+    out.sort_by(|a, b| b.mod_time.cmp(&a.mod_time));
+    out
 }
 
 /// Returns a file's contents. Port of Go's `Read`.
@@ -381,12 +376,104 @@ mod tests {
         assert_eq!(note.heading, "plain first line");
     }
 
+    fn rel_paths(plans: &[Plan]) -> Vec<String> {
+        let mut v: Vec<String> = plans.iter().map(|p| p.rel_path.clone()).collect();
+        v.sort();
+        v
+    }
+
     #[test]
-    fn list_skips_paths_outside_root() {
+    fn glob_star_selects_subset() {
+        let dir = TempDir::new();
+        let root = dir.path();
+        let now = SystemTime::now();
+        write_at(&root.join("docs/a-plans/x.md"), "# X\n", now);
+        write_at(&root.join("docs/b-plans/y.md"), "# Y\n", now);
+        write_at(&root.join("docs/notes/z.md"), "# Z\n", now);
+
+        let got = list(root, &["docs/*-plans/".to_string()]);
+        assert_eq!(
+            rel_paths(&got),
+            vec!["docs/a-plans/x.md", "docs/b-plans/y.md"]
+        );
+    }
+
+    #[test]
+    fn glob_double_star_any_depth() {
+        let dir = TempDir::new();
+        let root = dir.path();
+        let now = SystemTime::now();
+        write_at(&root.join("design/a.md"), "# A\n", now);
+        write_at(&root.join("src/ui/design/b.md"), "# B\n", now);
+        write_at(&root.join("docs/other/c.md"), "# C\n", now);
+
+        let got = list(root, &["**/design/*.md".to_string()]);
+        assert_eq!(rel_paths(&got), vec!["design/a.md", "src/ui/design/b.md"]);
+    }
+
+    #[test]
+    fn negation_excludes() {
+        let dir = TempDir::new();
+        let root = dir.path();
+        let now = SystemTime::now();
+        write_at(&root.join("docs/a.md"), "# A\n", now);
+        write_at(&root.join("docs/archive/old.md"), "# Old\n", now);
+
+        let paths = vec!["docs/**".to_string(), "!docs/archive/**".to_string()];
+        let got = list(root, &paths);
+        assert_eq!(rel_paths(&got), vec!["docs/a.md"]);
+    }
+
+    #[test]
+    fn bare_dir_still_recursive_and_backcompat() {
+        // A no-wildcard entry (like every existing config) still pulls every .md
+        // beneath it via parent-match — proving old configs keep working.
+        let dir = TempDir::new();
+        let root = dir.path();
+        let now = SystemTime::now();
+        write_at(&root.join("docs/plans/a.md"), "# A\n", now);
+        write_at(&root.join("docs/plans/deep/b.md"), "# B\n", now);
+        write_at(&root.join("other/c.md"), "# C\n", now);
+
+        let got = list(root, &["docs/plans".to_string()]);
+        assert_eq!(
+            rel_paths(&got),
+            vec!["docs/plans/a.md", "docs/plans/deep/b.md"]
+        );
+    }
+
+    #[test]
+    fn respects_gitignore() {
+        let dir = TempDir::new();
+        let root = dir.path();
+        let now = SystemTime::now();
+        fs::write(root.join(".gitignore"), "build/\n").unwrap();
+        write_at(&root.join("docs/a.md"), "# A\n", now);
+        write_at(&root.join("build/gen.md"), "# Gen\n", now);
+
+        let got = list(root, &["**/*.md".to_string()]);
+        assert_eq!(rel_paths(&got), vec!["docs/a.md"]);
+    }
+
+    #[test]
+    fn non_md_filtered() {
+        let dir = TempDir::new();
+        let root = dir.path();
+        let now = SystemTime::now();
+        write_at(&root.join("docs/a.md"), "# A\n", now);
+        write_at(&root.join("docs/readme.txt"), "not markdown", now);
+
+        let got = list(root, &["docs/**".to_string()]);
+        assert_eq!(rel_paths(&got), vec!["docs/a.md"]);
+    }
+
+    #[test]
+    fn absolute_and_parent_lines_match_nothing() {
+        // Replaces list_skips_paths_outside_root: the walk is root-confined, so
+        // absolute / `..` lines simply select nothing instead of leaking.
         let dir = TempDir::new();
         let root = dir.path();
         write_at(&root.join("docs/plans/a.md"), "# A\n", SystemTime::now());
-        // A file outside root that "/" or ".." would otherwise reach.
         write_at(
             &root.join("..").join("outside.md"),
             "# leak\n",
@@ -395,17 +482,12 @@ mod tests {
 
         let paths = vec![
             "docs/plans".to_string(),
-            "/".to_string(),   // absolute: would walk the whole drive
-            "../".to_string(), // climbs out of root
+            "/".to_string(),
+            "../".to_string(),
             "docs/../../outside".to_string(),
         ];
         let got = list(root, &paths);
-        assert_eq!(
-            got.len(),
-            1,
-            "only the contained path is browsed, got {got:?}"
-        );
-        assert_eq!(got[0].rel_path, "docs/plans/a.md");
+        assert_eq!(rel_paths(&got), vec!["docs/plans/a.md"]);
     }
 
     #[test]

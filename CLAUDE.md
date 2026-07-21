@@ -39,6 +39,12 @@ store methods. Logic and tests live in store. If CLI and MCP disagree, that's a 
   needs a follow-up pre-pass.
 - **sha1_smol** (store key), **libc** flock (`LOCK_EX`), **serde/serde_json** with
   `#[serde(rename)]` pinned to the on-disk field names.
+- **ignore** owns plan-path glob matching — the one non-stdlib exception here.
+  `plan-paths` lines are reverse-gitignore globs; `src/plans.rs::list` builds an
+  `ignore::gitignore::Gitignore` and inverts its verdict per file
+  (`matched_path_or_any_parents`, `Ignore => include`) so a bare-dir line still
+  parent-matches every `.md` beneath it. Pure `overrides` don't parent-match — the
+  design's documented fallback, taken during implementation.
 - Everything else stdlib: `process::Command` for git, string ops for frontmatter,
   temp+rename for atomic writes, stdin lines for MCP.
 
