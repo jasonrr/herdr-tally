@@ -42,4 +42,6 @@ if pgrep -fl 'bin/tally mcp' >/tmp/tally-release-mcp.$$; then
   cat /tmp/tally-release-mcp.$$
 fi
 rm -f /tmp/tally-release-mcp.$$
-echo "next: git diff && git commit -am 'Release v$next' && git tag v$next && git push --follow-tags"
+# Annotated tag (-a) so `git push --follow-tags` actually pushes it; lightweight
+# tags are skipped by --follow-tags and get left behind.
+echo "next: git diff && git commit -am 'Release v$next' && git tag -a v$next -m 'Release v$next' && git push --follow-tags"
