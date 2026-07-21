@@ -80,12 +80,17 @@ pub fn run(args: &[String]) -> ExitCode {
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
         );
     }
-    let res = event_loop(&mut terminal, &mut a);
+    // repro(herdr#1295): per-frame render-vs-flush timings land here so the
+    // maintainer can capture the PTY-write stall. Overridable via TALLY_REPRO_LOG.
+    let log_path =
+        std::env::var("TALLY_REPRO_LOG").unwrap_or_else(|_| "/tmp/tally-herdr-1295.log".into());
+    let res = event_loop(&mut terminal, &mut a, &log_path);
     if enhanced {
         let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
     }
     let _ = execute!(stdout(), DisableBracketedPaste, DisableMouseCapture);
     ratatui::restore();
+    eprintln!("[repro herdr#1295] per-frame timings written to {log_path}");
     match res {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -140,27 +145,55 @@ fn spawn_sync_worker(project_path: String, status: Arc<Mutex<String>>) -> mpsc::
     tx
 }
 
-fn event_loop(terminal: &mut ratatui::DefaultTerminal, a: &mut App) -> std::io::Result<()> {
+fn event_loop(
+    terminal: &mut ratatui::DefaultTerminal,
+    a: &mut App,
+    log_path: &str,
+) -> std::io::Result<()> {
+    use std::io::Write;
     let mut last_load = Instant::now();
+    let mut log = std::fs::File::create(log_path).ok();
+    // What caused the frame we're about to draw (issue's "trigger" column).
+    let mut trigger = "init";
     loop {
-        terminal.draw(|f| view::draw(a, f))?;
+        // Split Terminal::draw into render (the closure building the back buffer)
+        // vs flush (ratatui's write to the child PTY returning) — the render stays
+        // microseconds; the flush is where the herdr pane stalls 40-500ms.
+        let mut render = Duration::ZERO;
+        let t0 = Instant::now();
+        terminal.draw(|f| {
+            let r = Instant::now();
+            view::draw(a, f);
+            render = r.elapsed();
+        })?;
+        let total = t0.elapsed();
+        let flush = total.saturating_sub(render);
+        if let Some(f) = log.as_mut() {
+            let _ = writeln!(
+                f,
+                "{trigger:<6} total={total:>10.2?}  render={render:>9.2?}  flush={flush:>10.2?}  mode={:?} scroll={}",
+                a.mode, a.read_scroll
+            );
+        }
         let timeout = POLL.saturating_sub(last_load.elapsed());
         if event::poll(timeout)? {
-            // Coalesce: drain every input already buffered before redrawing, so a
-            // burst of mouse-wheel ticks (which arrive far faster than a herdr
-            // pane can flush a full-viewport repaint) collapses into ONE flush
-            // instead of one stop-motion frame per tick. One event still behaves
-            // exactly as before.
-            loop {
-                match event::read()? {
-                    Event::Key(k) if k.kind != KeyEventKind::Release => a.on_key(k),
-                    Event::Mouse(m) => a.on_mouse(m),
-                    Event::Paste(s) => a.on_paste(s),
-                    _ => {} // Resize redraws on the next loop pass
+            // NO coalescing here (the 8780dcf workaround is deliberately removed):
+            // one input event => one redraw => one flush, so a mouse-wheel burst
+            // replays the per-flush stall frame-by-frame. This is the repro.
+            match event::read()? {
+                Event::Key(k) if k.kind != KeyEventKind::Release => {
+                    trigger = "key";
+                    a.on_key(k);
                 }
-                if a.quit || !event::poll(Duration::ZERO)? {
-                    break;
+                Event::Mouse(m) => {
+                    trigger = "mouse";
+                    a.on_mouse(m);
                 }
+                Event::Paste(s) => {
+                    trigger = "paste";
+                    a.on_paste(s);
+                }
+                _ => trigger = "other", // Resize redraws on the next loop pass
             }
         }
         if last_load.elapsed() >= POLL {
