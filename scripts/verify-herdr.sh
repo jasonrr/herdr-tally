@@ -86,7 +86,7 @@ hasfocus="$(printf '%s' "$match" | jq -e 'has("focused")' >/dev/null 2>&1 && ech
 # 6. live repaint + zoom primitive.
 if [ -n "$PANE" ]; then
   ( cd "$REPO" && "$TALLY" todos create --title "$MARK" ) >/dev/null 2>&1
-  "$HERDR" wait output "$PANE" --match "$MARK" --source recent --timeout 8000 >/dev/null 2>&1
+  "$HERDR" pane wait-output "$PANE" --match "$MARK" --source recent --timeout 8000 >/dev/null 2>&1
   check "pane repaints on store change (create todo -> wait output)" $?
   "$HERDR" pane zoom "$PANE" --on  >/dev/null 2>&1 && "$HERDR" pane zoom "$PANE" --off >/dev/null 2>&1
   check "pane zoom --on/--off (focus primitive)" $?
