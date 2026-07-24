@@ -151,7 +151,7 @@ pub(crate) fn reformat_tables(body: &str) -> String {
                 }
                 s.trim_end().to_string()
             };
-            out.push(fmt_row(&block[0]));
+            let mut tbl: Vec<String> = vec![fmt_row(&block[0])];
             let mut sep = String::new();
             for (c, &width) in w.iter().enumerate() {
                 if c > 0 {
@@ -159,9 +159,21 @@ pub(crate) fn reformat_tables(body: &str) -> String {
                 }
                 sep.push_str(&"─".repeat(width));
             }
-            out.push(sep);
+            tbl.push(sep);
             for row in &block[1..] {
-                out.push(fmt_row(row));
+                tbl.push(fmt_row(row));
+            }
+            // Two trailing spaces = a markdown hard break, so tui-markdown keeps
+            // each row on its own line instead of reflowing the whole block into
+            // one paragraph. The last row is left alone: the following blank line
+            // (or EOF) already ends the paragraph.
+            let last = tbl.len() - 1;
+            for (k, line) in tbl.iter().enumerate() {
+                if k == last {
+                    out.push(line.clone());
+                } else {
+                    out.push(format!("{line}  "));
+                }
             }
             i = j;
         } else {
@@ -202,11 +214,36 @@ mod tests {
         let out = reformat_tables(input);
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines[0], "before");
-        assert_eq!(lines[2], "Name   │ Qty"); // header padded to widest cell
-        assert_eq!(lines[3], "───────┼────"); // separator sized to columns
-        assert_eq!(lines[4], "apples │ 3");
-        assert_eq!(lines[5], "pears  │ 12");
+        // Every row but the last carries a trailing "  " hard break so
+        // tui-markdown keeps the block multi-line (see render regression test).
+        assert_eq!(lines[2], "Name   │ Qty  "); // header padded to widest cell
+        assert_eq!(lines[3], "───────┼────  "); // separator sized to columns
+        assert_eq!(lines[4], "apples │ 3  ");
+        assert_eq!(lines[5], "pears  │ 12"); // last row: no hard break needed
         assert_eq!(*lines.last().unwrap(), "after");
+    }
+
+    #[test]
+    fn render_keeps_table_rows_on_separate_lines() {
+        // Regression: reformat_tables used to emit plain adjacent lines that
+        // tui-markdown reflowed into ONE paragraph, collapsing the whole table
+        // onto a single line. The hard breaks must keep each row separate.
+        let md = "Intro.\n\n| Name | Qty |\n|---|---|\n| apples | 3 |\n| pears | 12 |\n\nAfter.\n";
+        let text = render(md);
+        let rows: Vec<String> = text
+            .lines
+            .iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+        assert!(
+            rows.iter()
+                .any(|r: &String| r.contains("apples") && !r.contains("pears")),
+            "each table row must render on its own line, got: {rows:?}"
+        );
+        assert!(
+            rows.iter().any(|r: &String| r.contains("pears")),
+            "body rows must survive: {rows:?}"
+        );
     }
 
     #[test]
