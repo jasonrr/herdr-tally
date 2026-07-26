@@ -365,6 +365,16 @@ impl App {
         }
         self.clamp_cursor();
         if self.mode == Mode::Read {
+            // An agent (or another pane) can rewrite the pad we're viewing.
+            // read_body is a snapshot taken at enter_read, so re-read it here or
+            // the view stays frozen on stale content. Scroll is untouched.
+            // ponytail: whole-file re-read on the 2s poll; diff/mtime-gate it if
+            // a huge pad ever makes this visible.
+            if self.tab == Tab::Scratchpads
+                && let Ok((s, _)) = self.p.read_scratchpad(&self.read_id, "full", "", 0, 0)
+            {
+                self.read_body = s.content;
+            }
             self.rebuild_read_text();
         }
     }
@@ -1883,6 +1893,18 @@ mod tests {
             modifiers: KeyModifiers::NONE,
         });
         assert_eq!(f.store().get_todo(&t.id).unwrap().priority, "p1");
+    }
+
+    #[test]
+    fn read_view_picks_up_external_scratchpad_edits() {
+        let mut app = test_app_with_scratchpad("pad", "before");
+        app.enter_read();
+        assert_eq!(app.read_body, "before");
+        let id = app.read_id.clone();
+        let rev = app.pads.iter().find(|s| s.id == id).unwrap().revision;
+        app.p.append_scratchpad(&id, "after", rev, true).unwrap();
+        app.reload();
+        assert!(app.read_body.contains("after"), "{}", app.read_body);
     }
 
     #[test]
