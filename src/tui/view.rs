@@ -29,12 +29,15 @@ pub fn tab_ranges() -> [(u16, u16); 3] {
     out
 }
 
-/// The compact metadata row for a todo's detail/edit view. Only status and
-/// priority appear — the fields the TUI can actually change.
-pub fn meta_line(status: &str, priority: &str) -> String {
+/// The compact metadata row for a todo's detail/edit view: status, priority,
+/// and blocker count — the fields the TUI can actually change.
+pub fn meta_line(status: &str, priority: &str, blockers: usize) -> String {
     // Uppercase for display (P0…P3); same char count as the stored lowercase,
     // so meta_segments (which measures the raw value) stays pixel-aligned.
-    format!("○ {status}   ‖ {}", priority.to_uppercase())
+    format!(
+        "○ {status}   ‖ {}   ⛓ blockers: {blockers}",
+        priority.to_uppercase()
+    )
 }
 
 /// Attribution suffix for the detail meta row: "   · by X, 2m ago", or
@@ -58,13 +61,17 @@ pub fn attribution(created_by: &str, updated_by: &str, updated: &str, now: u64) 
 }
 
 /// Segment boundaries within meta_line, as char columns relative to its start:
-/// (status_end, prio_start, prio_end). Derived from the same strings the row
-/// renders, so the click targets can't drift from the pixels.
-pub fn meta_segments(status: &str, priority: &str) -> (u16, u16, u16) {
+/// (status_end, prio_start, prio_end, blk_start, blk_end). Derived from the
+/// same strings the row renders, so the click targets can't drift from the
+/// pixels.
+pub fn meta_segments(status: &str, priority: &str, blockers: usize) -> (u16, u16, u16, u16, u16) {
     let status_end = ("○ ".chars().count() + status.chars().count()) as u16;
     let prio_start = status_end + "   ".chars().count() as u16;
     let prio_end = prio_start + ("‖ ".chars().count() + priority.chars().count()) as u16;
-    (status_end, prio_start, prio_end)
+    let blk_start = prio_end + "   ".chars().count() as u16;
+    let blk_end =
+        blk_start + ("⛓ blockers: ".chars().count() + blockers.to_string().chars().count()) as u16;
+    (status_end, prio_start, prio_end, blk_start, blk_end)
 }
 
 /// Hit-test regions recorded by the last draw.
@@ -76,6 +83,8 @@ pub struct Hits {
     pub meta: Option<MetaHits>,
     pub title_card: Option<Rect>,
     pub body_card: Option<Rect>,
+    /// Blockers row under the read/edit meta line; click opens the picker.
+    pub blockers_row: Option<Rect>,
     /// Height of the read-mode body viewport (for page scrolling).
     pub body_h: u16,
 }
@@ -93,17 +102,22 @@ pub struct MetaHits {
     status_end: u16,
     prio_start: u16,
     prio_end: u16,
+    blk_start: u16,
+    blk_end: u16,
 }
 
 impl MetaHits {
-    pub fn new(x: u16, row: u16, status: &str, priority: &str) -> MetaHits {
-        let (status_end, prio_start, prio_end) = meta_segments(status, priority);
+    pub fn new(x: u16, row: u16, status: &str, priority: &str, blockers: usize) -> MetaHits {
+        let (status_end, prio_start, prio_end, blk_start, blk_end) =
+            meta_segments(status, priority, blockers);
         MetaHits {
             x,
             row,
             status_end,
             prio_start,
             prio_end,
+            blk_start,
+            blk_end,
         }
     }
 }
@@ -112,6 +126,7 @@ impl MetaHits {
 pub enum MetaSeg {
     Status,
     Priority,
+    Blockers,
 }
 
 impl Hits {
@@ -146,6 +161,8 @@ impl Hits {
             Some(MetaSeg::Status)
         } else if rel >= m.prio_start && rel < m.prio_end {
             Some(MetaSeg::Priority)
+        } else if rel >= m.blk_start && rel < m.blk_end {
+            Some(MetaSeg::Blockers)
         } else {
             None
         }
@@ -178,6 +195,15 @@ pub fn draw(app: &mut App, f: &mut Frame) {
         Mode::CommentInput => {
             draw_read(app, f, content);
             draw_comment_input(app, f, content);
+        }
+        Mode::BlockerPick => {
+            // the launching view stays visible behind the overlay
+            match app.blocker_return {
+                Mode::Read => draw_read(app, f, content),
+                Mode::Edit => draw_edit(app, f, content),
+                _ => draw_list(app, f, content),
+            }
+            draw_blocker_pick(app, f, content);
         }
         _ => draw_list(app, f, content), // List, Confirm, Filter
     }
@@ -579,9 +605,25 @@ fn draw_read(app: &mut App, f: &mut Frame, area: Rect) {
     let title_h = title_par.line_count(area.width).max(1) as u16;
 
     let is_todo = app.tab == Tab::Todos;
+    let now = crate::tui::time::now_unix();
+    // Resolved before the layout: the blocker sub-row block is N rows tall.
+    let meta = if is_todo {
+        app.todos.iter().find(|t| t.id == app.read_id).map(|t| {
+            (
+                t.status.clone(),
+                t.priority.clone(),
+                attribution(&t.created_by, &t.updated_by, &t.updated, now),
+                t.blockers.clone(),
+            )
+        })
+    } else {
+        None
+    };
+    let n_blockers = meta.as_ref().map_or(0, |(_, _, _, b)| b.len());
     let mut constraints = vec![Constraint::Length(title_h), Constraint::Length(1)];
     if is_todo {
         constraints.push(Constraint::Length(1)); // meta row
+        constraints.push(Constraint::Length(n_blockers as u16)); // blocker sub-rows
         constraints.push(Constraint::Length(1)); // separator
     }
     constraints.push(Constraint::Min(0)); // body
@@ -589,20 +631,21 @@ fn draw_read(app: &mut App, f: &mut Frame, area: Rect) {
     f.render_widget(title_par, parts[0]);
 
     let body_area = *parts.last().unwrap();
-    if is_todo {
-        let now = crate::tui::time::now_unix();
-        let meta = app.todos.iter().find(|t| t.id == app.read_id).map(|t| {
-            (
-                t.status.clone(),
-                t.priority.clone(),
-                attribution(&t.created_by, &t.updated_by, &t.updated, now),
-            )
-        });
-        if let Some((status, priority, attr)) = meta {
-            let meta_area = parts[2];
-            let row = format!("{}{attr}", meta_line(&status, &priority));
-            f.render_widget(Line::from(row).dim(), meta_area);
-            app.hits.meta = Some(MetaHits::new(meta_area.x, meta_area.y, &status, &priority));
+    if let Some((status, priority, attr, blockers)) = meta {
+        let meta_area = parts[2];
+        let row = format!("{}{attr}", meta_line(&status, &priority, blockers.len()));
+        f.render_widget(Line::from(row).dim(), meta_area);
+        app.hits.meta = Some(MetaHits::new(
+            meta_area.x,
+            meta_area.y,
+            &status,
+            &priority,
+            blockers.len(),
+        ));
+        if !blockers.is_empty() {
+            let brow_area = parts[3];
+            f.render_widget(Paragraph::new(blocker_rows(app, &blockers)), brow_area);
+            app.hits.blockers_row = Some(brow_area);
         }
     }
 
@@ -643,6 +686,23 @@ fn draw_read(app: &mut App, f: &mut Frame, area: Rect) {
     }
 }
 
+/// One dim ` └ title` row per blocker, resolved against the unfiltered list so
+/// a hidden completed blocker still shows; done ones are tagged, and an id
+/// that no longer resolves is shown raw rather than dropped.
+fn blocker_rows(app: &App, blockers: &[String]) -> Vec<Line<'static>> {
+    blockers
+        .iter()
+        .map(|id| {
+            let row = match app.todos_all.iter().find(|t| t.id == *id) {
+                Some(t) if t.status == "completed" => format!(" └ {} (done)", t.title),
+                Some(t) => format!(" └ {}", t.title),
+                None => format!(" └ {id}"),
+            };
+            Line::from(row).dim()
+        })
+        .collect()
+}
+
 fn card_theme(title: &'static str, focused: bool) -> EditorTheme<'static> {
     let border = if focused {
         Style::new().fg(Color::Cyan)
@@ -664,10 +724,21 @@ fn card_theme(title: &'static str, focused: bool) -> EditorTheme<'static> {
 
 fn draw_edit(app: &mut App, f: &mut Frame, area: Rect) {
     let show_meta = app.tab == Tab::Todos;
+    // A not-yet-saved todo has no id to hold blockers; count is 0 there.
+    let blockers: Vec<String> = if show_meta && !app.edit_id.is_empty() {
+        app.todos_all
+            .iter()
+            .find(|t| t.id == app.edit_id)
+            .map(|t| t.blockers.clone())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     let discard = app.mode == Mode::DiscardConfirm;
     let mut constraints = vec![Constraint::Length(4)]; // title card: 2 rows + border
     if show_meta {
-        constraints.push(Constraint::Length(1));
+        constraints.push(Constraint::Length(1)); // meta row
+        constraints.push(Constraint::Length(blockers.len() as u16)); // blocker sub-rows
     }
     constraints.push(Constraint::Min(3)); // body card
     if discard {
@@ -675,7 +746,7 @@ fn draw_edit(app: &mut App, f: &mut Frame, area: Rect) {
     }
     let parts = Layout::vertical(constraints).split(area);
     let title_area = parts[0];
-    let body_area = parts[if show_meta { 2 } else { 1 }];
+    let body_area = parts[if show_meta { 3 } else { 1 }];
 
     let title_view = EditorView::new(&mut app.title_ed)
         .theme(card_theme("Title", app.edit_focus == Focus::Title))
@@ -692,8 +763,22 @@ fn draw_edit(app: &mut App, f: &mut Frame, area: Rect) {
         };
         if let Some((status, priority)) = status_priority {
             let meta_area = parts[1];
-            f.render_widget(Line::from(meta_line(&status, &priority)).dim(), meta_area);
-            app.hits.meta = Some(MetaHits::new(meta_area.x, meta_area.y, &status, &priority));
+            f.render_widget(
+                Line::from(meta_line(&status, &priority, blockers.len())).dim(),
+                meta_area,
+            );
+            app.hits.meta = Some(MetaHits::new(
+                meta_area.x,
+                meta_area.y,
+                &status,
+                &priority,
+                blockers.len(),
+            ));
+        }
+        if !blockers.is_empty() {
+            let brow_area = parts[2];
+            f.render_widget(Paragraph::new(blocker_rows(app, &blockers)), brow_area);
+            app.hits.blockers_row = Some(brow_area);
         }
     }
 
@@ -711,6 +796,15 @@ fn draw_edit(app: &mut App, f: &mut Frame, area: Rect) {
             *parts.last().unwrap(),
         );
     }
+}
+
+/// First visible row of a picker so the selection stays in view: 0 until the
+/// cursor walks past the window, then the window slides with the cursor pinned
+/// to the bottom edge.
+fn pick_window(sel: usize, len: usize, visible: usize) -> usize {
+    let visible = visible.max(1);
+    sel.saturating_sub(visible - 1)
+        .min(len.saturating_sub(visible))
 }
 
 fn draw_comment_anchor(app: &App, f: &mut Frame, area: Rect) {
@@ -736,12 +830,78 @@ fn draw_comment_anchor(app: &App, f: &mut Frame, area: Rect) {
     let content_w = lines.iter().map(|l| l.width()).max().unwrap_or(0) as u16;
     let want_w = (content_w + 4).min(area.width);
     let want_h = (lines.len() as u16 + 2).min(area.height);
+    let visible = want_h.saturating_sub(2) as usize;
+    let start = pick_window(app.comment_anchor_sel, lines.len(), visible);
+    let lines: Vec<Line> = lines.into_iter().skip(start).take(visible).collect();
     let x = area.x + (area.width.saturating_sub(want_w)) / 2;
     let y = area.y + (area.height.saturating_sub(want_h)) / 2;
     let popup = Rect::new(x, y, want_w, want_h);
     f.render_widget(Clear, popup);
     let block = Block::bordered()
         .title(" Anchor to · j/k Enter Esc ")
+        .border_style(Style::new().fg(Color::Cyan))
+        .padding(Padding::horizontal(1));
+    f.render_widget(Paragraph::new(lines).block(block), popup);
+}
+
+fn draw_blocker_pick(app: &App, f: &mut Frame, area: Rect) {
+    let title = app
+        .todos
+        .iter()
+        .find(|t| t.id == app.blocker_target)
+        .map(|t| t.title.as_str())
+        .unwrap_or("");
+    let lines: Vec<Line> = app
+        .blocker_opts
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            let marker = if i == app.blocker_sel { "» " } else { "  " };
+            let checkbox = if app.blocker_checked.contains(&t.id) {
+                "[x]"
+            } else {
+                "[ ]"
+            };
+            let done = if t.status == "completed" {
+                " (done)"
+            } else {
+                ""
+            };
+            let l = Line::from(format!(
+                "{marker}{checkbox} [{}] {}{done}",
+                t.priority.to_uppercase(),
+                t.title
+            ));
+            if i == app.blocker_sel {
+                l.add_modifier(Modifier::REVERSED)
+            } else {
+                l
+            }
+        })
+        .collect();
+    let hint = Line::from("space toggle · enter save · esc cancel").dim();
+
+    let content_w = lines
+        .iter()
+        .chain([&hint])
+        .map(|l| l.width())
+        .max()
+        .unwrap_or(0) as u16;
+    let want_w = (content_w + 4).min(area.width);
+    // +2 borders, +2 spacer + hint row (both stay pinned below the scroll window)
+    let want_h = (lines.len() as u16 + 4).min(area.height);
+    let visible = want_h.saturating_sub(4) as usize;
+    let start = pick_window(app.blocker_sel, lines.len(), visible);
+    let mut lines: Vec<Line> = lines.into_iter().skip(start).take(visible).collect();
+    lines.push(Line::from(""));
+    lines.push(hint);
+    let x = area.x + (area.width.saturating_sub(want_w)) / 2;
+    let y = area.y + (area.height.saturating_sub(want_h)) / 2;
+    let popup = Rect::new(x, y, want_w, want_h);
+    f.render_widget(Clear, popup);
+    let block = Block::bordered()
+        .title(format!(" Blockers for: {title} "))
+        .border_style(Style::new().fg(Color::Cyan))
         .padding(Padding::horizontal(1));
     f.render_widget(Paragraph::new(lines).block(block), popup);
 }
@@ -834,6 +994,7 @@ fn footer(app: &App) -> &'static str {
         Mode::Help => "esc · q · ? — close",
         Mode::CommentAnchor => "j/k pick · enter select · esc cancel",
         Mode::CommentInput => "ctrl+d save · esc cancel",
+        Mode::BlockerPick => "↑↓ · space toggle · enter save · esc cancel",
     }
 }
 
@@ -849,6 +1010,7 @@ const HELP_ROWS: &[(&str, &str)] = &[
     ("space", "toggle done (todos)"),
     ("p", "cycle priority (todos)"),
     ("G", "toggle GitHub sync (todos)"),
+    ("b", "edit blockers (todos)"),
     ("c", "hide / show done (todos)"),
     ("d", "delete"),
     ("/", "filter (plans)"),
@@ -858,6 +1020,7 @@ const HELP_ROWS: &[(&str, &str)] = &[
     ("", ""),
     ("Read", ""),
     ("space p e", "done · prio · edit"),
+    ("b", "edit blockers (todos)"),
     ("C", "add comment (pick anchor, then type)"),
     ("y  Y  R", "copy id · copy body · raw"),
     ("ctrl+d/u", "scroll · esc back"),
@@ -899,6 +1062,7 @@ fn draw_help(f: &mut Frame, area: Rect) {
     f.render_widget(Clear, popup);
     let block = Block::bordered()
         .title(" Shortcuts ")
+        .border_style(Style::new().fg(Color::Cyan))
         .padding(Padding::horizontal(1));
     f.render_widget(Paragraph::new(lines).block(block), popup);
 }
@@ -908,6 +1072,20 @@ mod tests {
     use super::*;
     use crate::store::resolve_project_in;
     use crate::store::testutil::{TempDir, git_repo};
+
+    #[test]
+    fn pick_window_keeps_selection_visible() {
+        // fits entirely: never scrolls
+        assert_eq!(pick_window(0, 3, 10), 0);
+        assert_eq!(pick_window(2, 3, 10), 0);
+        // cursor inside the first page: no scroll
+        assert_eq!(pick_window(4, 20, 5), 0);
+        // cursor past the page: window slides, cursor at bottom edge
+        assert_eq!(pick_window(5, 20, 5), 1);
+        assert_eq!(pick_window(19, 20, 5), 15);
+        // degenerate zero-height window never panics or over-shoots
+        assert_eq!(pick_window(19, 20, 0), 19);
+    }
 
     #[test]
     fn attribution_cases() {
@@ -1084,20 +1262,23 @@ mod tests {
     #[test]
     fn meta_segments_match_rendered_line() {
         let (status, priority) = ("open", "p1");
-        let line: Vec<char> = meta_line(status, priority).chars().collect();
-        let (status_end, prio_start, prio_end) = meta_segments(status, priority);
+        let line: Vec<char> = meta_line(status, priority, 2).chars().collect();
+        let (status_end, prio_start, prio_end, blk_start, blk_end) =
+            meta_segments(status, priority, 2);
         let seg: String = line[..status_end as usize].iter().collect();
         assert_eq!(seg, "○ open");
         let seg: String = line[prio_start as usize..prio_end as usize]
             .iter()
             .collect();
         assert_eq!(seg, "‖ P1");
-        assert_eq!(prio_end as usize, line.len());
+        let seg: String = line[blk_start as usize..blk_end as usize].iter().collect();
+        assert_eq!(seg, "⛓ blockers: 2");
+        assert_eq!(blk_end as usize, line.len());
     }
 
     #[test]
     fn meta_seg_at_resolves_segments() {
-        let m = MetaHits::new(0, 4, "open", "p2");
+        let m = MetaHits::new(0, 4, "open", "p2", 2);
         let h = Hits {
             meta: Some(m),
             ..Hits::default()
@@ -1107,7 +1288,10 @@ mod tests {
         assert_eq!(h.meta_seg_at(7, 4), None); // the gap
         assert_eq!(h.meta_seg_at(9, 4), Some(MetaSeg::Priority)); // "‖"
         assert_eq!(h.meta_seg_at(12, 4), Some(MetaSeg::Priority)); // last of "p2"
-        assert_eq!(h.meta_seg_at(13, 4), None); // past the end
+        assert_eq!(h.meta_seg_at(13, 4), None); // gap before blockers
+        assert_eq!(h.meta_seg_at(16, 4), Some(MetaSeg::Blockers)); // "⛓"
+        assert_eq!(h.meta_seg_at(28, 4), Some(MetaSeg::Blockers)); // the count digit
+        assert_eq!(h.meta_seg_at(29, 4), None); // past the end
         assert_eq!(h.meta_seg_at(9, 5), None); // wrong row
     }
 

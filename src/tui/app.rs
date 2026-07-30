@@ -50,6 +50,8 @@ pub enum Mode {
     /// Two-step add-comment: pick an anchor, then type the note.
     CommentAnchor,
     CommentInput,
+    /// Batch-edit a todo's blockers via checkboxes; committed in one call on Enter.
+    BlockerPick,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -66,6 +68,9 @@ pub struct App {
     pub quit: bool,
 
     pub todos: Vec<Todo>,
+    /// The same list before hide_completed filtering — blocker sub-rows resolve
+    /// titles against this so a hidden completed blocker still displays.
+    pub todos_all: Vec<Todo>,
     /// Ids of blocked todos, computed once per reload, not per frame. Id-keyed
     /// (not positional) so it survives the `/` filter narrowing `todos`' indices.
     pub blocked: HashSet<String>,
@@ -130,6 +135,23 @@ pub struct App {
     pub comment_target: String,
     pub comment_ed: EditorState,
     pub comment_handler: EditorEventHandler,
+
+    // blocker-pick flow
+    /// Id of the todo whose blockers are being edited.
+    pub blocker_target: String,
+    /// Candidates = every open todo except the target, plus any completed todo
+    /// still among the target's blockers (fetched fresh, bypassing
+    /// hide_completed, so those stay visible and uncheckable).
+    pub blocker_opts: Vec<Todo>,
+    pub blocker_sel: usize,
+    /// Locally toggled checked ids among blocker_opts; committed as a whole on Enter.
+    pub blocker_checked: HashSet<String>,
+    /// Original blocker ids that aren't among blocker_opts (e.g. a dangling
+    /// reference) — carried through untouched so a save can't drop an id it
+    /// never displayed.
+    pub blocker_extra: Vec<String>,
+    /// Mode the picker was opened from (List, Read, or Edit); restored on close.
+    pub blocker_return: Mode,
 
     /// Hit-test regions recorded by the last draw (view.rs).
     pub hits: Hits,
@@ -241,6 +263,7 @@ impl App {
             status: String::new(),
             quit: false,
             todos: Vec::new(),
+            todos_all: Vec::new(),
             blocked: HashSet::new(),
             comment_counts: HashMap::new(),
             pads: Vec::new(),
@@ -275,6 +298,12 @@ impl App {
             comment_target: String::new(),
             comment_ed: new_editor("", false),
             comment_handler: EditorEventHandler::emacs_mode(),
+            blocker_target: String::new(),
+            blocker_opts: Vec::new(),
+            blocker_sel: 0,
+            blocker_checked: HashSet::new(),
+            blocker_extra: Vec::new(),
+            blocker_return: Mode::List,
             hits: Hits::default(),
             sync_status: std::sync::Arc::new(std::sync::Mutex::new(String::new())),
             sync_tx: None,
@@ -326,6 +355,7 @@ impl App {
             ..TodoFilter::default()
         }) {
             Ok(t) => {
+                self.todos_all = t.clone();
                 let t: Vec<Todo> = if self.hide_completed {
                     t.into_iter().filter(|x| x.status != "completed").collect()
                 } else {
@@ -598,6 +628,7 @@ impl App {
             Mode::Help => self.key_help(k),
             Mode::CommentAnchor => self.key_comment_anchor(k),
             Mode::CommentInput => self.key_comment_input(k),
+            Mode::BlockerPick => self.key_blocker_pick(k),
         }
     }
 
@@ -655,6 +686,7 @@ impl App {
                 self.reload();
             }
             KeyCode::Char('G') if self.tab == Tab::Todos => self.toggle_github(),
+            KeyCode::Char('b') if self.tab == Tab::Todos => self.begin_blocker_pick(),
             _ => {}
         }
     }
@@ -674,6 +706,7 @@ impl App {
                 self.toggle_status();
                 self.reload();
             }
+            KeyCode::Char('b') if self.tab == Tab::Todos => self.begin_blocker_pick(),
             KeyCode::Char('p') if self.tab == Tab::Todos => {
                 self.cycle_priority();
                 self.reload();
@@ -876,11 +909,14 @@ impl App {
                 }
             }
             Mode::Read => {
-                if self.tab == Tab::Todos {
-                    self.meta_click(m.column, m.row);
+                if self.tab == Tab::Todos && !self.meta_click(m.column, m.row) {
+                    self.blockers_row_click(m.column, m.row);
                 }
             }
             Mode::Edit => {
+                if self.blockers_row_click(m.column, m.row) {
+                    return;
+                }
                 if let Some(r) = self.hits.title_card
                     && r.contains(ratatui::layout::Position::new(m.column, m.row))
                 {
@@ -900,7 +936,8 @@ impl App {
     }
 
     /// Click on the read/edit metadata row: `○ status` toggles done, `‖ prio`
-    /// cycles priority. Returns whether a segment was hit.
+    /// cycles priority, `⛓ blockers` opens the picker. Returns whether a
+    /// segment was hit.
     fn meta_click(&mut self, x: u16, y: u16) -> bool {
         match self.hits.meta_seg_at(x, y) {
             Some(MetaSeg::Status) => {
@@ -911,6 +948,10 @@ impl App {
             Some(MetaSeg::Priority) => {
                 self.cycle_priority();
                 self.reload();
+                true
+            }
+            Some(MetaSeg::Blockers) => {
+                self.begin_blocker_pick();
                 true
             }
             None => false,
@@ -935,6 +976,19 @@ impl App {
             }
             _ => false,
         }
+    }
+
+    /// Click on the read/edit blockers row opens the picker for that item.
+    /// Returns whether the row was hit.
+    fn blockers_row_click(&mut self, x: u16, y: u16) -> bool {
+        let hit = self
+            .hits
+            .blockers_row
+            .is_some_and(|r| r.contains(ratatui::layout::Position::new(x, y)));
+        if hit {
+            self.begin_blocker_pick();
+        }
+        hit
     }
 
     /// Forwards a mouse event to both editors; edtui bounds-checks against the
@@ -1075,6 +1129,109 @@ impl App {
                 self.nudge_sync();
             }
             Err(e) => self.status = format!("sync toggle failed: {e}"),
+        }
+    }
+
+    /// Opens the blocker picker for the selected todo. Candidates are fetched
+    /// fresh (bypassing hide_completed) so a completed blocker isn't silently
+    /// hidden from a list it's already checked against. No-op if there are no
+    /// candidates.
+    fn begin_blocker_pick(&mut self) {
+        // Target follows the launching view: the item being read/edited there,
+        // the list selection otherwise. Closing restores that mode.
+        let target = match self.mode {
+            Mode::Read => Some(self.read_id.clone()).filter(|s| !s.is_empty()),
+            Mode::Edit => Some(self.edit_id.clone()).filter(|s| !s.is_empty()),
+            _ => self.selected_id(),
+        };
+        let Some(target) = target else {
+            return;
+        };
+        let full = match self.p.list_todos(TodoFilter {
+            sort: "priority".to_string(),
+            ..TodoFilter::default()
+        }) {
+            Ok(t) => t,
+            Err(e) => {
+                self.status = format!("load failed: {e}");
+                return;
+            }
+        };
+        let current_blockers: HashSet<String> = full
+            .iter()
+            .find(|t| t.id == target)
+            .map(|t| t.blockers.iter().cloned().collect())
+            .unwrap_or_default();
+        // Completed todos can't block, so they're not offered — except ones
+        // already among the target's blockers, which stay listed (checked) so
+        // they can be seen and unchecked.
+        let opts: Vec<Todo> = full
+            .into_iter()
+            .filter(|t| {
+                t.id != target && (t.status != "completed" || current_blockers.contains(&t.id))
+            })
+            .collect();
+        if opts.is_empty() {
+            return;
+        }
+        let candidate_ids: HashSet<String> = opts.iter().map(|o| o.id.clone()).collect();
+        self.blocker_checked = current_blockers
+            .intersection(&candidate_ids)
+            .cloned()
+            .collect();
+        self.blocker_extra = current_blockers
+            .difference(&candidate_ids)
+            .cloned()
+            .collect();
+        self.blocker_target = target;
+        self.blocker_opts = opts;
+        self.blocker_sel = 0;
+        self.blocker_return = self.mode;
+        self.mode = Mode::BlockerPick;
+    }
+
+    fn key_blocker_pick(&mut self, k: KeyEvent) {
+        let n = self.blocker_opts.len();
+        if n == 0 {
+            // Invariant: begin_blocker_pick never enters this mode with no
+            // candidates. Guard anyway so a wrap-around never divides by zero.
+            if matches!(k.code, KeyCode::Esc | KeyCode::Char('q')) {
+                self.mode = self.blocker_return;
+            }
+            return;
+        }
+        match k.code {
+            KeyCode::Esc | KeyCode::Char('q') => self.mode = self.blocker_return,
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.blocker_sel = (self.blocker_sel + 1) % n;
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.blocker_sel = (self.blocker_sel + n - 1) % n;
+            }
+            KeyCode::Char(' ') => {
+                let id = self.blocker_opts[self.blocker_sel].id.clone();
+                if !self.blocker_checked.remove(&id) {
+                    self.blocker_checked.insert(id);
+                }
+            }
+            KeyCode::Enter => {
+                let target = self.blocker_target.clone();
+                let mut checked: Vec<String> = self.blocker_checked.iter().cloned().collect();
+                checked.extend(self.blocker_extra.iter().cloned());
+                match self.p.set_blockers(&target, checked) {
+                    Ok(_) => self.nudge_sync(),
+                    Err(e) => self.status = format!("blockers update failed: {e}"),
+                }
+                self.mode = self.blocker_return;
+                self.reload();
+                if self.mode == Mode::Edit {
+                    // set_blockers bumped `updated`; keep the edit-save
+                    // conflict guard from seeing our own write (meta_click_edit
+                    // does the same after its store writes).
+                    self.refresh_edit_updated();
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1876,7 +2033,7 @@ mod tests {
         f.app.reload();
         f.app.enter_read();
         // pretend the last draw put the meta row at y=4, x=0
-        f.app.hits.meta = Some(super::super::view::MetaHits::new(0, 4, "open", "p2"));
+        f.app.hits.meta = Some(super::super::view::MetaHits::new(0, 4, "open", "p2", 0));
         f.app.on_mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 1, // inside "○ open"
@@ -1884,8 +2041,14 @@ mod tests {
             modifiers: KeyModifiers::NONE,
         });
         assert_eq!(f.store().get_todo(&t.id).unwrap().status, "completed");
-        let (_, prio_start, _) = super::super::view::meta_segments("completed", "p2");
-        f.app.hits.meta = Some(super::super::view::MetaHits::new(0, 4, "completed", "p2"));
+        let (_, prio_start, _, _, _) = super::super::view::meta_segments("completed", "p2", 0);
+        f.app.hits.meta = Some(super::super::view::MetaHits::new(
+            0,
+            4,
+            "completed",
+            "p2",
+            0,
+        ));
         f.app.on_mouse(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: prio_start,
@@ -2125,5 +2288,233 @@ mod tests {
         f.app.copy_selection();
         assert_eq!(f.app.body_ed.mode, EditorMode::Insert);
         assert_eq!(f.app.status, "", "empty selection must not report a copy");
+    }
+
+    #[test]
+    fn blocker_pick_opens_with_current_blockers_prechecked() {
+        let mut f = Fixture::new(Tab::Todos);
+        let target = f.store().create_todo("Main", "", "p2", vec![]).unwrap();
+        let blocker = f.store().create_todo("Blocker", "", "p2", vec![]).unwrap();
+        f.store()
+            .set_blockers(&target.id, vec![blocker.id.clone()])
+            .unwrap();
+        f.app.reload();
+        f.app.cursor[Tab::Todos.idx()] = f
+            .app
+            .visible_todos()
+            .iter()
+            .position(|t| t.id == target.id)
+            .unwrap();
+
+        f.app.on_key(key(KeyCode::Char('b')));
+
+        assert_eq!(f.app.mode, Mode::BlockerPick);
+        assert_eq!(f.app.blocker_target, target.id);
+        assert_eq!(f.app.blocker_opts.len(), 1);
+        assert!(f.app.blocker_checked.contains(&blocker.id));
+    }
+
+    #[test]
+    fn blocker_pick_toggle_and_save_commits_and_marks_blocked() {
+        let mut f = Fixture::new(Tab::Todos);
+        let target = f.store().create_todo("Main", "", "p2", vec![]).unwrap();
+        let blocker = f.store().create_todo("Blocker", "", "p2", vec![]).unwrap();
+        f.app.reload();
+        f.app.cursor[Tab::Todos.idx()] = f
+            .app
+            .visible_todos()
+            .iter()
+            .position(|t| t.id == target.id)
+            .unwrap();
+
+        f.app.on_key(key(KeyCode::Char('b')));
+        assert_eq!(f.app.mode, Mode::BlockerPick);
+        f.app.on_key(key(KeyCode::Char(' '))); // check the only candidate
+        f.app.on_key(key(KeyCode::Enter));
+
+        assert_eq!(f.app.mode, Mode::List);
+        let saved = f.store().get_todo(&target.id).unwrap();
+        assert_eq!(saved.blockers, vec![blocker.id.clone()]);
+        assert!(f.app.blocked.contains(&target.id));
+    }
+
+    #[test]
+    fn blocker_pick_esc_discards_local_changes() {
+        let mut f = Fixture::new(Tab::Todos);
+        let target = f.store().create_todo("Main", "", "p2", vec![]).unwrap();
+        f.store().create_todo("Blocker", "", "p2", vec![]).unwrap();
+        f.app.reload();
+        f.app.cursor[Tab::Todos.idx()] = f
+            .app
+            .visible_todos()
+            .iter()
+            .position(|t| t.id == target.id)
+            .unwrap();
+
+        f.app.on_key(key(KeyCode::Char('b')));
+        f.app.on_key(key(KeyCode::Char(' ')));
+        f.app.on_key(key(KeyCode::Esc));
+
+        assert_eq!(f.app.mode, Mode::List);
+        let saved = f.store().get_todo(&target.id).unwrap();
+        assert!(saved.blockers.is_empty(), "esc must not write to the store");
+    }
+
+    #[test]
+    fn blocker_pick_noop_when_target_is_only_todo() {
+        let mut f = Fixture::new(Tab::Todos);
+        f.store().create_todo("Solo", "", "p2", vec![]).unwrap();
+        f.app.reload();
+
+        f.app.on_key(key(KeyCode::Char('b')));
+
+        assert_eq!(f.app.mode, Mode::List);
+    }
+
+    #[test]
+    fn blocker_pick_lists_completed_candidates_prechecked_and_uncheck_removes() {
+        let mut f = Fixture::new(Tab::Todos);
+        let target = f.store().create_todo("Main", "", "p2", vec![]).unwrap();
+        let open_blocker = f.store().create_todo("Open", "", "p2", vec![]).unwrap();
+        let done_blocker = f.store().create_todo("Done", "", "p2", vec![]).unwrap();
+        f.store().complete_todo(&done_blocker.id, false).unwrap();
+        f.store()
+            .set_blockers(
+                &target.id,
+                vec![open_blocker.id.clone(), done_blocker.id.clone()],
+            )
+            .unwrap();
+        f.app.reload();
+        f.app.cursor[Tab::Todos.idx()] = f
+            .app
+            .visible_todos()
+            .iter()
+            .position(|t| t.id == target.id)
+            .unwrap();
+
+        f.app.on_key(key(KeyCode::Char('b')));
+        assert_eq!(f.app.mode, Mode::BlockerPick);
+        // The completed candidate must still be listed (hide_completed doesn't
+        // apply here) and pre-checked, since it's an existing blocker.
+        let done_pos = f
+            .app
+            .blocker_opts
+            .iter()
+            .position(|t| t.id == done_blocker.id)
+            .expect("completed candidate must be listed");
+        assert!(f.app.blocker_checked.contains(&done_blocker.id));
+
+        // Select and uncheck it, leaving the open blocker untouched.
+        f.app.blocker_sel = done_pos;
+        f.app.on_key(key(KeyCode::Char(' ')));
+        f.app.on_key(key(KeyCode::Enter));
+
+        let saved = f.store().get_todo(&target.id).unwrap();
+        assert_eq!(saved.blockers, vec![open_blocker.id]);
+    }
+
+    #[test]
+    fn blocker_pick_excludes_completed_non_blockers() {
+        let mut f = Fixture::new(Tab::Todos);
+        let target = f.store().create_todo("Main", "", "p2", vec![]).unwrap();
+        let open = f.store().create_todo("Open", "", "p2", vec![]).unwrap();
+        let done = f.store().create_todo("Done", "", "p2", vec![]).unwrap();
+        f.store().complete_todo(&done.id, false).unwrap();
+        f.app.reload();
+        f.app.cursor[Tab::Todos.idx()] = f
+            .app
+            .visible_todos()
+            .iter()
+            .position(|t| t.id == target.id)
+            .unwrap();
+
+        f.app.on_key(key(KeyCode::Char('b')));
+
+        assert_eq!(f.app.mode, Mode::BlockerPick);
+        let ids: Vec<&str> = f.app.blocker_opts.iter().map(|t| t.id.as_str()).collect();
+        assert!(ids.contains(&open.id.as_str()));
+        assert!(
+            !ids.contains(&done.id.as_str()),
+            "a completed todo that isn't already a blocker must not be offered"
+        );
+    }
+
+    #[test]
+    fn read_mode_click_blockers_segment_opens_picker() {
+        let mut f = Fixture::new(Tab::Todos);
+        let target = f.store().create_todo("Main", "", "p2", vec![]).unwrap();
+        f.store().create_todo("Other", "", "p2", vec![]).unwrap();
+        f.app.reload();
+        f.app.cursor[Tab::Todos.idx()] = f
+            .app
+            .visible_todos()
+            .iter()
+            .position(|t| t.id == target.id)
+            .unwrap();
+        f.app.on_key(key(KeyCode::Enter));
+        assert_eq!(f.app.mode, Mode::Read);
+
+        let (_, _, _, blk_start, _) = super::super::view::meta_segments("open", "p2", 0);
+        f.app.hits.meta = Some(super::super::view::MetaHits::new(0, 4, "open", "p2", 0));
+        f.app.on_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: blk_start,
+            row: 4,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert_eq!(f.app.mode, Mode::BlockerPick);
+        assert_eq!(f.app.blocker_target, target.id);
+    }
+
+    #[test]
+    fn blocker_pick_from_read_returns_to_read() {
+        let mut f = Fixture::new(Tab::Todos);
+        let target = f.store().create_todo("Main", "", "p2", vec![]).unwrap();
+        f.store().create_todo("Other", "", "p2", vec![]).unwrap();
+        f.app.reload();
+        f.app.cursor[Tab::Todos.idx()] = f
+            .app
+            .visible_todos()
+            .iter()
+            .position(|t| t.id == target.id)
+            .unwrap();
+        f.app.on_key(key(KeyCode::Enter));
+        assert_eq!(f.app.mode, Mode::Read);
+
+        f.app.on_key(key(KeyCode::Char('b')));
+        assert_eq!(f.app.mode, Mode::BlockerPick);
+        assert_eq!(f.app.blocker_target, target.id);
+
+        f.app.on_key(key(KeyCode::Esc));
+        assert_eq!(f.app.mode, Mode::Read, "picker must return to its launcher");
+    }
+
+    #[test]
+    fn blocker_pick_from_edit_commits_and_returns_to_edit() {
+        let mut f = Fixture::new(Tab::Todos);
+        let target = f.store().create_todo("Main", "", "p2", vec![]).unwrap();
+        let other = f.store().create_todo("Other", "", "p2", vec![]).unwrap();
+        f.app.reload();
+        f.app.cursor[Tab::Todos.idx()] = f
+            .app
+            .visible_todos()
+            .iter()
+            .position(|t| t.id == target.id)
+            .unwrap();
+        f.app.on_key(key(KeyCode::Char('e')));
+        assert_eq!(f.app.mode, Mode::Edit);
+
+        // No key opens the picker in edit mode; the mouse path calls this.
+        f.app.begin_blocker_pick();
+        assert_eq!(f.app.mode, Mode::BlockerPick);
+        assert_eq!(f.app.blocker_target, target.id);
+
+        f.app.on_key(key(KeyCode::Char(' ')));
+        f.app.on_key(key(KeyCode::Enter));
+
+        assert_eq!(f.app.mode, Mode::Edit, "picker must return to its launcher");
+        let saved = f.store().get_todo(&target.id).unwrap();
+        assert_eq!(saved.blockers, vec![other.id]);
     }
 }
