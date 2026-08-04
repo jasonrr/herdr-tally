@@ -171,6 +171,13 @@ The TUI carries the same work across tabs — todos, scratchpads, and a read-onl
 > A bare `docs/plans` still pulls every `.md` beneath it. `.gitignore`'d files never
 > surface.
 
+Blockers ride along in the TUI too: a blocked todo carries a ⛔ in the list, read
+mode shows a `⛓ blockers: N` segment with each blocker's title beneath it, and `b`
+(or a click on that segment) opens a checkbox picker to set them — space toggles,
+enter saves. Completed todos aren't offered as new blockers.
+
+![The blocker picker open on the flaky-test todo: its existing blocker is checked, and the ⛔ marks the blocked row in the list behind](docs/media/blockers.png)
+
 ## Sync todos with GitHub issues
 
 A todo can be mirrored to a GitHub issue and kept in step with it. Opt in

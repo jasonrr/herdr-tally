@@ -2,7 +2,7 @@
 # Render every README demo from scratch: reseed the throwaway store, then run
 # each vhs tape. Reseeds before each tape so all recordings share identical
 # state (the two-way tape mutates the store). Needs vhs + tmux + a built
-# bin/tally. Outputs: docs/media/{hero,two-way}.gif and docs/media/todos.png
+# bin/tally. Outputs: docs/media/{hero,two-way}.gif and docs/media/{todos,blockers}.png
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -10,7 +10,7 @@ cd "$(dirname "$0")/.."
 command -v vhs  >/dev/null || { echo "need vhs: brew install vhs"; exit 1; }
 command -v tmux >/dev/null || { echo "need tmux: brew install tmux"; exit 1; }
 
-for tape in hero two-way stills; do
+for tape in hero two-way stills blockers; do
   echo "== recording $tape =="
   tmux kill-server 2>/dev/null || true
   bash scripts/demo-seed.sh >/dev/null

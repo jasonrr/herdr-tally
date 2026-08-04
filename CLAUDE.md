@@ -74,7 +74,7 @@ and the binary is then SIGKILLed at exec (`Killed: 9`, exit 137, no output) even
 though `codesign -v` reports "valid on disk". A fresh inode (rm then cp) avoids it;
 `codesign -f -s - bin/tally` also fixes an already-broken copy.
 
-## herdr integration gotchas (verified live against herdr 0.7.5)
+## herdr integration gotchas (verified live against herdr 0.8.0)
 
 - Panes open with cwd = the user's project; actions run with cwd = the plugin root.
   Pane commands must locate the binary via `$HERDR_PLUGIN_ROOT` (see manifest).
