@@ -10,7 +10,8 @@ use std::time::SystemTime;
 
 /// Browsed when no plan-paths config exists, relative to the project root.
 /// Mirrors Go's `defaultPaths`.
-const DEFAULT_PATHS: [&str; 3] = [
+const DEFAULT_PATHS: [&str; 4] = [
+    "docs/plans",
     "docs/superpowers/specs",
     "docs/superpowers/plans",
     "docs/solutions",
@@ -291,6 +292,7 @@ mod tests {
         assert_eq!(
             got,
             vec![
+                "docs/plans",
                 "docs/superpowers/specs",
                 "docs/superpowers/plans",
                 "docs/solutions"
@@ -305,8 +307,8 @@ mod tests {
         let got = load_plan_paths_from(dir.path());
         assert_eq!(
             got.len(),
-            3,
-            "empty config should fall back to 3 defaults, got {got:?}"
+            4,
+            "empty config should fall back to 4 defaults, got {got:?}"
         );
     }
 

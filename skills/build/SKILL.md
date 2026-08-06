@@ -1,0 +1,27 @@
+---
+name: build
+description: Execute a plan task-by-task with fresh subagents — TDD, per-task review, tally todos as the ledger. Use after /plan, or on any existing plan doc that has tally todos.
+---
+
+# Build
+
+You are the controller: dispatch, verify, adjudicate. Subagents implement. Work on a branch or worktree, never main — in herdr, `herdr worktree create --branch <name>`; otherwise EnterWorktree.
+
+Input: a plan doc under `docs/plans/` and its `plan:<slug>` tally todos. If neither is in context, take the most recent plan doc, `todo_list` its tag, and confirm with the user before starting.
+
+## Per task, in blocker order, one at a time
+
+1. **Cut check.** Reread the task's "Exists because" line against the code as it stands now. If it no longer holds, or a dumber path has appeared since planning, surface that to the user instead of building — plans go stale as earlier tasks land, and a wasted task costs its full implement+review cycle.
+2. **Claim.** `todo_lock` + status `in_progress`, so the user's TUI shows who has it.
+3. **Implement.** Dispatch a fresh subagent with an explicit `model` — the tier the plan names, `sonnet` if unstated. Never omit the model: an omitted model inherits the session's, usually the most expensive. The brief is self-contained (repo path, the task's text with its code and interfaces, verification commands, commit instructions) — never session history, never the whole plan. The brief includes:
+   - TDD: write the failing test first, run it, confirm it fails for the right reason, then minimal code to green. No production code without a failing test. A bug found mid-task gets a failing test reproducing it before the fix.
+   - Hygiene during implementation, not review: types, lint clean, no dead code, match surrounding style.
+   - Commit with explicit paths (`git add <paths>`, never `-A`); no AI references in messages.
+   - Stop conditions: the live code contradicts the brief, verification fails twice after a fix attempt, or the work needs files outside those named — report back rather than improvise.
+4. **Verify yourself.** Run the task's verification command and read the diff. The subagent's report is a claim, not evidence.
+5. **Review.** Dispatch a fresh reviewer subagent (`sonnet`) with the diff and the task brief. Verdict: approve, or findings with severity. Fix rounds go back to the implementer, capped at 3; past the cap you adjudicate each open finding yourself — fix it, or park it with a ruling recorded as a tally comment on the todo. Nothing is dropped silently.
+6. **Record.** `todo_complete`, plus one ledger line in a `build-log:<slug>` scratchpad: commits, deviations from plan, parked findings. Files survive context compaction — the ledger is what stops a resumed session from re-dispatching finished work.
+
+One implementer at a time; parallel implementers on one tree conflict.
+
+When every task is complete, run /review-branch.

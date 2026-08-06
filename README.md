@@ -161,7 +161,7 @@ The TUI carries the same work across tabs — todos, scratchpads, and a read-onl
 **Plans** tab (`3`) that browses the plan dirs. Filter with `/`, edit in place,
 `Y` to copy an item, `?` for help.
 
-> Plans default to `docs/superpowers/{specs,plans}` and `docs/solutions`. To browse
+> Plans default to `docs/plans`, `docs/superpowers/{specs,plans}`, and `docs/solutions`. To browse
 > other dirs, put patterns (one per line, relative to the repo root) in a `plan-paths`
 > file under your tally config dir (`$XDG_CONFIG_HOME/tally`, else `~/.config/tally`).
 > Each line is a **gitignore glob with the sense reversed**: a match *includes* a
