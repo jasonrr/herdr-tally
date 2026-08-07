@@ -221,6 +221,16 @@ fn editor_text(st: &EditorState) -> String {
     String::from(st.lines.clone())
 }
 
+/// edtui's paste lands the cursor on the last pasted char (vi `p` semantics);
+/// in our modeless/insert editor it should sit *after* the paste. Nudge one col
+/// right, clamped to line length (insert mode allows col == len).
+fn cursor_past_paste(st: &mut EditorState) {
+    let len = st.lines.len_col(st.cursor.row).unwrap_or(0);
+    if st.cursor.col < len {
+        st.cursor.col += 1;
+    }
+}
+
 /// Copies s to the system clipboard via pbcopy (macOS-only, like the scripts).
 fn clipboard_write(s: &str) -> std::io::Result<()> {
     let mut c = Command::new("pbcopy").stdin(Stdio::piped()).spawn()?;
@@ -842,13 +852,21 @@ impl App {
         if self.mode == Mode::CommentInput {
             self.comment_handler
                 .on_paste_event(text, &mut self.comment_ed);
+            cursor_past_paste(&mut self.comment_ed);
             return;
         }
         if self.mode == Mode::Edit {
-            match self.edit_focus {
-                Focus::Title => self.title_handler.on_paste_event(text, &mut self.title_ed),
-                Focus::Body => self.body_handler.on_paste_event(text, &mut self.body_ed),
-            }
+            let ed = match self.edit_focus {
+                Focus::Title => {
+                    self.title_handler.on_paste_event(text, &mut self.title_ed);
+                    &mut self.title_ed
+                }
+                Focus::Body => {
+                    self.body_handler.on_paste_event(text, &mut self.body_ed);
+                    &mut self.body_ed
+                }
+            };
+            cursor_past_paste(ed);
         }
     }
 
@@ -1638,6 +1656,21 @@ mod tests {
         std::mem::forget(root);
         std::mem::forget(repo);
         app
+    }
+
+    #[test]
+    fn cursor_past_paste_lands_after_text() {
+        // edtui leaves the cursor on the last pasted char; helper nudges past it.
+        let mut ed = new_editor("abc", false);
+        ed.cursor.col = 2; // last char of "abc" (len 3), as edtui leaves it
+        cursor_past_paste(&mut ed);
+        assert_eq!(ed.cursor.col, 3); // now one past the end (insert position)
+
+        // Empty line: nothing to advance past, stays put (no overflow).
+        let mut ed = new_editor("", false);
+        ed.cursor.col = 0;
+        cursor_past_paste(&mut ed);
+        assert_eq!(ed.cursor.col, 0);
     }
 
     #[test]
