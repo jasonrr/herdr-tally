@@ -168,6 +168,21 @@ pub struct App {
     /// once the file at our path no longer matches, so the footer can nag a restart.
     pub launch_inode: Option<u64>,
     pub stale: bool,
+
+    /// (routing on?, lens count) from `.claude/dev-loop.md`, or None when the
+    /// repo hasn't run /tally:setup. Display-only.
+    pub devloop: Option<(bool, usize)>,
+}
+
+/// (routing on?, lens count) from <project>/.claude/dev-loop.md, or None when
+/// the repo hasn't run /tally:setup. Display-only — the TUI never writes this.
+pub(crate) fn devloop_status(project_root: &std::path::Path) -> Option<(bool, usize)> {
+    let text = std::fs::read_to_string(project_root.join(".claude/dev-loop.md")).ok()?;
+    let routing = text.lines().any(|l| l.trim_end() == "routing: on");
+    let lenses = text.split("## Lenses").nth(1).map_or(0, |rest| {
+        rest.lines().filter(|l| l.starts_with("- ")).count()
+    });
+    Some((routing, lenses))
 }
 
 /// Inode of the file currently at our own executable's path. `None` if it can't
@@ -266,6 +281,7 @@ impl ClipboardTrait for PbcopyClipboard {
 
 impl App {
     pub fn new(p: Project, initial: Tab) -> App {
+        let devloop = devloop_status(&p.path);
         let mut app = App {
             p,
             tab: initial,
@@ -319,6 +335,7 @@ impl App {
             sync_tx: None,
             launch_inode: binary_inode(),
             stale: false,
+            devloop,
         };
         app.load_ui_state();
         app
@@ -355,6 +372,7 @@ impl App {
         if let (Some(launch), Some(cur)) = (self.launch_inode, binary_inode()) {
             self.stale = launch != cur;
         }
+        self.devloop = devloop_status(&self.p.path);
         let list_sel = if self.mode == Mode::List {
             self.selected_id()
         } else {
@@ -1596,6 +1614,21 @@ mod tests {
         fn store(&self) -> Project {
             resolve_project_in(self.root.path(), Some(&self.repo.path().to_string_lossy())).unwrap()
         }
+    }
+
+    #[test]
+    fn devloop_status_reads_config() {
+        let dir = TempDir::new();
+        assert_eq!(devloop_status(dir.path()), None); // no file -> not set up
+        std::fs::create_dir_all(dir.path().join(".claude")).unwrap();
+        std::fs::write(
+            dir.path().join(".claude/dev-loop.md"),
+            "# dev loop\nrouting: on\n\n## Lenses\n- correctness: x\n- invariants: y\n",
+        )
+        .unwrap();
+        assert_eq!(devloop_status(dir.path()), Some((true, 2)));
+        std::fs::write(dir.path().join(".claude/dev-loop.md"), "routing: off\n").unwrap();
+        assert_eq!(devloop_status(dir.path()), Some((false, 0)));
     }
 
     fn key(code: KeyCode) -> KeyEvent {

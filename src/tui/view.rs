@@ -947,15 +947,19 @@ fn draw_footer(app: &App, f: &mut Frame, area: Rect) {
         .lock()
         .map(|s| s.clone())
         .unwrap_or_default();
-    let first = if sync.is_empty() {
-        Line::from(hints).dim()
-    } else {
-        Line::from(vec![
-            Span::from(hints).dim(),
-            Span::from("    "),
-            Span::from(sync).dim(),
-        ])
+    let devloop = match app.devloop {
+        None => "dev loop: not set up · /tally:setup".to_string(),
+        Some((true, n)) => format!("dev loop: routing on · {n} lenses"),
+        Some((false, n)) => format!("dev loop: routing off · {n} lenses"),
     };
+    let mut first_spans = vec![Span::from(hints).dim()];
+    if !sync.is_empty() {
+        first_spans.push(Span::from("    "));
+        first_spans.push(Span::from(sync).dim());
+    }
+    first_spans.push(Span::from("    "));
+    first_spans.push(Span::from(devloop).dim());
+    let first = Line::from(first_spans);
     let mut lines = vec![first];
     if app.stale {
         lines.push(
