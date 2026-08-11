@@ -114,7 +114,7 @@ claude plugin marketplace add jasonrr/herdr-tally   # or the local repo path
 claude plugin install tally@tally
 ```
 
-Skills arrive namespaced — `/tally:brainstorm`, `/tally:debug`, `/tally:plan`, `/tally:build`, `/tally:review-branch`, `/tally:setup`. The plugin also ships a SessionStart hook that stays **silent** until a repo opts in: consent is the `.claude/dev-loop.md` file that `/tally:setup` writes (delete it, or set `routing: off`, to disarm). If you previously symlinked `skills/*` into `~/.claude/skills/`, remove those symlinks so bare and namespaced names don't both resolve.
+Skills arrive namespaced — `/tally:brainstorm`, `/tally:debug`, `/tally:plan`, `/tally:build`, `/tally:review-branch`, `/tally:setup`. The plugin also ships a SessionStart hook that stays **silent** until a repo opts in: consent is the `.claude/tally-dev-loop.md` file that `/tally:setup` writes (delete it, or set `routing: off`, to disarm). If you previously symlinked `skills/*` into `~/.claude/skills/`, remove those symlinks so bare and namespaced names don't both resolve.
 
 ## Install from source (development)
 

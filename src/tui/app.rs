@@ -169,15 +169,15 @@ pub struct App {
     pub launch_inode: Option<u64>,
     pub stale: bool,
 
-    /// (routing on?, lens count) from `.claude/dev-loop.md`, or None when the
+    /// (routing on?, lens count) from `.claude/tally-dev-loop.md`, or None when the
     /// repo hasn't run /tally:setup. Display-only.
     pub devloop: Option<(bool, usize)>,
 }
 
-/// (routing on?, lens count) from <project>/.claude/dev-loop.md, or None when
+/// (routing on?, lens count) from <project>/.claude/tally-dev-loop.md, or None when
 /// the repo hasn't run /tally:setup. Display-only — the TUI never writes this.
 pub(crate) fn devloop_status(project_root: &std::path::Path) -> Option<(bool, usize)> {
-    let text = std::fs::read_to_string(project_root.join(".claude/dev-loop.md")).ok()?;
+    let text = std::fs::read_to_string(project_root.join(".claude/tally-dev-loop.md")).ok()?;
     let routing = text.split('\n').any(|l| l == "routing: on");
     let lenses = text.split("## Lenses").nth(1).map_or(0, |rest| {
         rest.lines()
@@ -1625,23 +1625,35 @@ mod tests {
         assert_eq!(devloop_status(dir.path()), None); // no file -> not set up
         std::fs::create_dir_all(dir.path().join(".claude")).unwrap();
         std::fs::write(
-            dir.path().join(".claude/dev-loop.md"),
+            dir.path().join(".claude/tally-dev-loop.md"),
             "# dev loop\nrouting: on\n\n## Lenses\n- correctness: x\n- invariants: y\n",
         )
         .unwrap();
         assert_eq!(devloop_status(dir.path()), Some((true, 2)));
-        std::fs::write(dir.path().join(".claude/dev-loop.md"), "routing: off\n").unwrap();
+        std::fs::write(
+            dir.path().join(".claude/tally-dev-loop.md"),
+            "routing: off\n",
+        )
+        .unwrap();
         assert_eq!(devloop_status(dir.path()), Some((false, 0)));
 
         // CRLF and trailing whitespace must NOT arm — mirrors the hook's strict grep
-        std::fs::write(dir.path().join(".claude/dev-loop.md"), "routing: on\r\n").unwrap();
+        std::fs::write(
+            dir.path().join(".claude/tally-dev-loop.md"),
+            "routing: on\r\n",
+        )
+        .unwrap();
         assert_eq!(devloop_status(dir.path()), Some((false, 0)));
-        std::fs::write(dir.path().join(".claude/dev-loop.md"), "routing: on \n").unwrap();
+        std::fs::write(
+            dir.path().join(".claude/tally-dev-loop.md"),
+            "routing: on \n",
+        )
+        .unwrap();
         assert_eq!(devloop_status(dir.path()), Some((false, 0)));
 
         // bullets after a later section heading are not lenses
         std::fs::write(
-            dir.path().join(".claude/dev-loop.md"),
+            dir.path().join(".claude/tally-dev-loop.md"),
             "routing: on\n\n## Lenses\n- a: x\n- b: y\n\n## Notes\n- not a lens\n",
         )
         .unwrap();

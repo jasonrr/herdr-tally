@@ -19,4 +19,4 @@ Goal: an approved design the size of the problem. No code, scaffolding, or file 
 
 Write the design to a tally scratchpad (ToolSearch `mcp__tally__` if the tools aren't loaded) tagged `design`: problem, chosen approach, what was cut and why, open questions. Keep it under a page — it's a handoff artifact for the next session, not a spec ritual. File a tally todo for any question deferred rather than answered.
 
-Design approval comes from the user, not from you. Once approved, offer /tally:plan. If `.claude/dev-loop.md` doesn't exist in this repo, also offer /tally:setup once — one line, not a pitch.
+Design approval comes from the user, not from you. Once approved, offer /tally:plan. If `.claude/tally-dev-loop.md` doesn't exist in this repo, also offer /tally:setup once — one line, not a pitch.

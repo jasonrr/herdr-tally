@@ -13,7 +13,7 @@ One deep pass over `merge-base..HEAD`, sized to the diff. A false finding costs 
 - **p2:** wrong on an edge the user will eventually hit; missing error handling around I/O; silent failure paths.
 - **p3:** hygiene.
 
-If `.claude/dev-loop.md` exists, its lens charters replace the default lenses below, and the repo's documented invariants are the p1 checklist.
+If `.claude/tally-dev-loop.md` exists, its lens charters replace the default lenses below, and the repo's documented invariants are the p1 checklist.
 
 ## Reviewers
 
@@ -36,4 +36,4 @@ Verify each finding to a verdict, never to a silent rejection: **CONFIRMED** (yo
 
 ## Gate
 
-Run the full test suite and lint fresh, in this session, and read the output. Append one line per surprise the review surfaced to a `learnings`-tagged tally scratchpad (`pattern → consequence`; create it if missing). Then present the real options — merge, push + PR, or leave the branch — and wait for the user's choice. The p2/p3 follow-ups live in tally, not in your head. If `.claude/dev-loop.md` doesn't exist, offer /tally:setup once in the closing summary.
+Run the full test suite and lint fresh, in this session, and read the output. Append one line per surprise the review surfaced to a `learnings`-tagged tally scratchpad (`pattern → consequence`; create it if missing). Then present the real options — merge, push + PR, or leave the branch — and wait for the user's choice. The p2/p3 follow-ups live in tally, not in your head. If `.claude/tally-dev-loop.md` doesn't exist, offer /tally:setup once in the closing summary.

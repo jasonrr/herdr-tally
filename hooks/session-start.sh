@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # SessionStart hook for the tally plugin. Emits the dev-loop routing rule ONLY
-# when this repo opted in via .claude/dev-loop.md with `routing: on` — the file
+# when this repo opted in via .claude/tally-dev-loop.md with `routing: on` — the file
 # /tally:setup writes. Silent no-op everywhere else: consent lives in the repo,
 # not in the install.
 set -euo pipefail
 
-cfg="${CLAUDE_PROJECT_DIR:-.}/.claude/dev-loop.md"
+cfg="${CLAUDE_PROJECT_DIR:-.}/.claude/tally-dev-loop.md"
 if [ ! -f "$cfg" ] || ! grep -q '^routing: on$' "$cfg" 2>/dev/null; then
   exit 0
 fi

@@ -13,12 +13,12 @@ out=$(CLAUDE_PROJECT_DIR="$tmp" bash "$HOOK")
 
 # 2. routing: off -> no output
 mkdir -p "$tmp/.claude"
-printf '# dev loop\nrouting: off\n' > "$tmp/.claude/dev-loop.md"
+printf '# dev loop\nrouting: off\n' > "$tmp/.claude/tally-dev-loop.md"
 out=$(CLAUDE_PROJECT_DIR="$tmp" bash "$HOOK")
 [ -z "$out" ] || fail "expected no output with routing: off"
 
 # 3. routing: on -> valid JSON containing the routing rule
-printf '# dev loop\nrouting: on\n' > "$tmp/.claude/dev-loop.md"
+printf '# dev loop\nrouting: on\n' > "$tmp/.claude/tally-dev-loop.md"
 out=$(CLAUDE_PROJECT_DIR="$tmp" bash "$HOOK")
 echo "$out" | python3 -c 'import sys,json; d=json.load(sys.stdin); assert "tally:brainstorm" in d["hookSpecificOutput"]["additionalContext"]' \
   || fail "routing: on must emit valid hook JSON containing the rule"

@@ -1,15 +1,15 @@
 ---
 name: setup
-description: One-time, consent-gated setup of the tally dev loop for this repo — asks before enabling session routing, proposes repo-specific reviewer lenses, then writes .claude/dev-loop.md. Use when the user asks to set up, enable, or configure the dev loop, or when another tally skill suggested it.
+description: One-time, consent-gated setup of the tally dev loop for this repo — asks before enabling session routing, proposes repo-specific reviewer lenses, then writes .claude/tally-dev-loop.md. Use when the user asks to set up, enable, or configure the dev loop, or when another tally skill suggested it.
 ---
 
 # Setup
 
-You are configuring, never assuming. This skill writes exactly one file — `.claude/dev-loop.md` at the repo root — and only after the user approves its exact content. Never touch `.claude/settings.json`, global config, or anything else. Every question is one AskUserQuestion.
+You are configuring, never assuming. This skill writes exactly one file — `.claude/tally-dev-loop.md` at the repo root — and only after the user approves its exact content. Never touch `.claude/settings.json`, global config, or anything else. Every question is one AskUserQuestion.
 
 ## 1. Current state
 
-If `.claude/dev-loop.md` already exists, show it and ask what to change — routing on/off, lens edits — then apply just that and stop. The full flow below is for first-time setup.
+If `.claude/tally-dev-loop.md` already exists, show it and ask what to change — routing on/off, lens edits — then apply just that and stop. The full flow below is for first-time setup.
 
 ## 2. Routing — ask first
 
@@ -33,7 +33,7 @@ Read the repo before proposing: CLAUDE.md (especially invariants / gotchas / "do
 
 ## 4. Write and recap
 
-Show the complete file content, get one final yes, then write `.claude/dev-loop.md`:
+Show the complete file content, get one final yes, then write `.claude/tally-dev-loop.md`:
 
     # dev loop
     routing: on
@@ -43,4 +43,4 @@ Show the complete file content, get one final yes, then write `.claude/dev-loop.
     - invariants: ...
     - simplicity: ...
 
-Recap in three lines: what was written and where; that `rm .claude/dev-loop.md` (or `routing: off`) undoes everything; that the tally TUI footer now reflects this state. Suggest committing the file so the whole team gets the same loop.
+Recap in three lines: what was written and where; that `rm .claude/tally-dev-loop.md` (or `routing: off`) undoes everything; that the tally TUI footer now reflects this state. Suggest committing the file so the whole team gets the same loop.
