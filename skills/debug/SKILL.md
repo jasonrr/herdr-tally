@@ -1,6 +1,6 @@
 ---
 name: debug
-description: Use on any bug, test failure, or unexpected behavior, before proposing fixes — root cause first, one hypothesis at a time. The second loop entry beside /brainstorm; exits into an inline fix or /tally:plan.
+description: Use on any bug, test failure, or unexpected behavior, before proposing fixes — root cause first, one hypothesis at a time. The second loop entry beside /tally:brainstorm; exits into an inline fix or /tally:plan.
 ---
 
 # Debug
