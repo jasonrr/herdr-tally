@@ -1,6 +1,6 @@
 ---
 name: debug
-description: Use on any bug, test failure, or unexpected behavior, before proposing fixes — root cause first, one hypothesis at a time. The second loop entry beside /brainstorm; exits into an inline fix or /plan.
+description: Use on any bug, test failure, or unexpected behavior, before proposing fixes — root cause first, one hypothesis at a time. The second loop entry beside /brainstorm; exits into an inline fix or /tally:plan.
 ---
 
 # Debug
@@ -24,7 +24,7 @@ State it: "X is the root cause because Y." Make the smallest change that tests i
 ## Fix and exit
 
 - Small fix: failing test reproducing the bug first (watch it fail), then the fix, then the full suite. Fresh output before claiming fixed.
-- Fix too big for inline (architectural, multi-file): take the diagnosis to /plan — the root-cause writeup is the design input.
+- Fix too big for inline (architectural, multi-file): take the diagnosis to /tally:plan — the root-cause writeup is the design input.
 - Genuinely environmental/external (rare — most "no root cause" is incomplete investigation): document what you ruled out in a tally scratchpad, add handling (retry, timeout, clear error) and logging for next time.
 
-Follow-ups the investigation turns up go to tally todos, not into this fix.
+Follow-ups the investigation turns up go to tally todos, not into this fix. When the root cause would surprise the next session, append one line to a `learnings`-tagged tally scratchpad — `pattern → consequence` (create the scratchpad if missing).
