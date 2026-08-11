@@ -11,7 +11,7 @@ A design is required input. If no `design`-tagged scratchpad is in context, `scr
 
 ## The plan doc
 
-Write to `docs/plans/YYYY-MM-DD-<slug>.md` — tally surfaces this directory in its Plans tab, so the user reads it beside the live todos. Header: goal, design scratchpad id, branch name, and the verification command for the whole feature. If the design scratchpad isn't already in context, find it with `scratchpad_find` (tag `design`, most recent) and confirm with the user it's the right one.
+Write to `docs/plans/YYYY-MM-DD-<slug>.md` — tally surfaces this directory in its Plans tab, so the user reads it beside the live todos. Header: goal, design scratchpad id, branch name, and the verification command for the whole feature.
 
 ## Research before tasks
 

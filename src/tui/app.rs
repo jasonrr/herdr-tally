@@ -178,9 +178,12 @@ pub struct App {
 /// the repo hasn't run /tally:setup. Display-only — the TUI never writes this.
 pub(crate) fn devloop_status(project_root: &std::path::Path) -> Option<(bool, usize)> {
     let text = std::fs::read_to_string(project_root.join(".claude/dev-loop.md")).ok()?;
-    let routing = text.lines().any(|l| l.trim_end() == "routing: on");
+    let routing = text.split('\n').any(|l| l == "routing: on");
     let lenses = text.split("## Lenses").nth(1).map_or(0, |rest| {
-        rest.lines().filter(|l| l.starts_with("- ")).count()
+        rest.lines()
+            .take_while(|l| !l.starts_with("## "))
+            .filter(|l| l.starts_with("- "))
+            .count()
     });
     Some((routing, lenses))
 }
@@ -1629,6 +1632,20 @@ mod tests {
         assert_eq!(devloop_status(dir.path()), Some((true, 2)));
         std::fs::write(dir.path().join(".claude/dev-loop.md"), "routing: off\n").unwrap();
         assert_eq!(devloop_status(dir.path()), Some((false, 0)));
+
+        // CRLF and trailing whitespace must NOT arm — mirrors the hook's strict grep
+        std::fs::write(dir.path().join(".claude/dev-loop.md"), "routing: on\r\n").unwrap();
+        assert_eq!(devloop_status(dir.path()), Some((false, 0)));
+        std::fs::write(dir.path().join(".claude/dev-loop.md"), "routing: on \n").unwrap();
+        assert_eq!(devloop_status(dir.path()), Some((false, 0)));
+
+        // bullets after a later section heading are not lenses
+        std::fs::write(
+            dir.path().join(".claude/dev-loop.md"),
+            "routing: on\n\n## Lenses\n- a: x\n- b: y\n\n## Notes\n- not a lens\n",
+        )
+        .unwrap();
+        assert_eq!(devloop_status(dir.path()), Some((true, 2)));
     }
 
     fn key(code: KeyCode) -> KeyEvent {

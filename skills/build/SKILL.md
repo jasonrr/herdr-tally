@@ -1,6 +1,6 @@
 ---
 name: build
-description: Execute a plan task-by-task with fresh subagents — TDD, per-task review, tally todos as the ledger. Use after /plan, or on any existing plan doc that has tally todos.
+description: Execute a plan task-by-task with fresh subagents — TDD, per-task review, tally todos as the ledger. Use after /tally:plan, or on any existing plan doc that has tally todos.
 ---
 
 # Build
@@ -13,7 +13,7 @@ Input: a plan doc under `docs/plans/` and its `plan:<slug>` tally todos. If neit
 
 1. **Cut check.** Reread the task's "Exists because" line against the code as it stands now. If it no longer holds, or a dumber path has appeared since planning, surface that to the user instead of building — plans go stale as earlier tasks land, and a wasted task costs its full implement+review cycle.
 2. **Claim.** `todo_lock` + status `in_progress`, so the user's TUI shows who has it.
-3. **Implement.** Dispatch a fresh subagent with an explicit `model` — the tier the plan names, `sonnet` if unstated. Never omit the model: an omitted model inherits the session's, usually the most expensive. Default dispatch surface is the Agent tool (cheap, model-pinned, serialized on one tree). Dispatch to a herdr pane instead when the task's model is `opus` or the user asked to watch: `herdr pane split <pane-id> --direction right --no-focus` in the worktree tab, `herdr pane run <new-id> "claude --model <tier>"`, `herdr agent prompt <new-id> "<the same self-contained brief>"`, then `herdr wait agent-status <new-id> --status done --timeout 600000` before verifying. Same brief either way. Never read a pane mid-flight — completion signals ride tally (todo status + comments), not pane-scraping. The brief is self-contained (repo path, the task's text with its code and interfaces, verification commands, commit instructions) — never session history, never the whole plan. The brief includes:
+3. **Implement.** Dispatch a fresh subagent with an explicit `model` — the tier the plan names, `sonnet` if unstated. Never omit the model: an omitted model inherits the session's, usually the most expensive. Default dispatch surface is the Agent tool (cheap, model-pinned, serialized on one tree). Dispatch to a herdr pane instead when the task's model is `opus` or the user asked to watch: `herdr pane split <pane-id> --direction right --no-focus` in the worktree tab, `herdr pane run <new-id> "claude --model <tier>"`, `herdr agent prompt <new-id> "<the same self-contained brief>"`, then `herdr agent wait <new-id> --until done --timeout 600000` before verifying. Same brief either way. Never read a pane mid-flight — completion signals ride tally (todo status + comments), not pane-scraping. The brief is self-contained (repo path, the task's text with its code and interfaces, verification commands, commit instructions) — never session history, never the whole plan. The brief includes:
    - TDD: write the failing test first, run it, confirm it fails for the right reason, then minimal code to green. No production code without a failing test. A bug found mid-task gets a failing test reproducing it before the fix.
    - Hygiene during implementation, not review: types, lint clean, no dead code, match surrounding style.
    - Commit with explicit paths (`git add <paths>`, never `-A`); no AI references in messages.

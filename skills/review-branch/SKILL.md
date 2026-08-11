@@ -28,7 +28,7 @@ Each brief is adversarial and live-tree:
 - Zero findings is a legal report ONLY with a probe log: what was executed, which edges were tried, which invariants were checked.
 - A clean report without a probe log is incomplete — re-dispatch it.
 
-In herdr (`HERDR_ENV=1`), run reviewers as panes so the human can watch the probing live: `herdr tab create --workspace <ws-id> --label review`, one `herdr pane split <pane-id> --direction right --no-focus` per extra reviewer, `herdr pane run <pane-id> "claude --model sonnet"` in each, then `herdr agent prompt <pane-id> "<brief>"`; `herdr wait agent-status <pane-id> --status done --timeout 600000` and read the final report with `herdr pane read <pane-id> --source recent --lines 100`. Outside herdr: Agent-tool fan-out with the same briefs.
+In herdr (`HERDR_ENV=1`), run reviewers as panes so the human can watch the probing live: `herdr tab create --workspace <ws-id> --label review`, one `herdr pane split <pane-id> --direction right --no-focus` per extra reviewer, `herdr pane run <pane-id> "claude --model sonnet"` in each, then `herdr agent prompt <pane-id> "<brief>"`; `herdr agent wait <pane-id> --until done --timeout 600000` and read the final report with `herdr pane read <pane-id> --source recent --lines 100`. Outside herdr: Agent-tool fan-out with the same briefs.
 
 ## Verdicts
 
