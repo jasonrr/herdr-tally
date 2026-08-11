@@ -110,7 +110,7 @@ are present. Prefer the exact command the installer printed over these fallbacks
 ### Claude Code plugin (dev loop skills)
 
 ```bash
-claude plugin marketplace add jasonrosoff/herdr-tally   # or the local repo path
+claude plugin marketplace add jasonrr/herdr-tally   # or the local repo path
 claude plugin install tally@tally
 ```
 
