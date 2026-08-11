@@ -1,0 +1,10 @@
+{
+  "name": "tally",
+  "description": "Project-scoped todos, scratchpads & plans for you and your agents, plus the tally dev loop: brainstorm → plan → build → review-branch, with debug and setup.",
+  "version": "0.1.10",
+  "author": { "name": "Jason Rosoff" },
+  "homepage": "https://github.com/jasonrosoff/herdr-tally",
+  "repository": "https://github.com/jasonrosoff/herdr-tally",
+  "license": "MIT",
+  "keywords": ["todos", "scratchpads", "plans", "dev-loop", "herdr"]
+}

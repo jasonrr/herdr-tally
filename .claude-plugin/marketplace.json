@@ -1,0 +1,14 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "tally",
+  "description": "tally — shared todos, scratchpads, plans & the dev loop.",
+  "owner": { "name": "Jason Rosoff" },
+  "plugins": [
+    {
+      "name": "tally",
+      "description": "Project-scoped todos, scratchpads & plans plus the tally dev loop skills.",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}
