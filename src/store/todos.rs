@@ -391,7 +391,15 @@ impl Project {
                 t.priority = normalize_priority(&v)?;
             }
             if let Some(v) = u.status {
-                t.status = normalize_status(&v)?;
+                let ns = normalize_status(&v)?;
+                // Keep the completed stamp in sync with the status transition,
+                // mirroring set_complete — update was leaving it null/stale.
+                if ns == "completed" && t.status != "completed" {
+                    t.completed = Some(now());
+                } else if ns != "completed" {
+                    t.completed = None;
+                }
+                t.status = ns;
             }
             if let Some(v) = u.tags {
                 t.tags = v;
@@ -685,6 +693,28 @@ mod tests {
         assert_eq!(p.get_todo(&td.id).unwrap().status, "open");
         // create rejects a bogus priority outright
         assert!(p.create_todo("y", "", "urgent", Vec::new()).is_err());
+    }
+
+    #[test]
+    fn test_update_status_syncs_completed_stamp() {
+        let p = new_project();
+        let td = p.create_todo("x", "", "", Vec::new()).unwrap();
+        let mut u = TodoUpdate::default();
+        u.status = Some("completed".into());
+        let done = p.update_todo(&td.id, u).unwrap();
+        assert!(
+            done.completed.is_some(),
+            "status=completed via update must stamp like complete_todo"
+        );
+        let stamp = done.completed.clone();
+        // touching another field must not re-stamp an already-completed todo
+        let mut u2 = TodoUpdate::default();
+        u2.title = Some("y".into());
+        assert_eq!(p.update_todo(&td.id, u2).unwrap().completed, stamp);
+        // reopening clears the stamp, mirroring incomplete_todo
+        let mut u3 = TodoUpdate::default();
+        u3.status = Some("open".into());
+        assert!(p.update_todo(&td.id, u3).unwrap().completed.is_none());
     }
 
     #[test]
