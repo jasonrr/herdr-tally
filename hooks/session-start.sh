@@ -6,7 +6,7 @@
 set -euo pipefail
 
 cfg="${CLAUDE_PROJECT_DIR:-.}/.claude/dev-loop.md"
-if [ ! -f "$cfg" ] || ! grep -q '^routing: on$' "$cfg"; then
+if [ ! -f "$cfg" ] || ! grep -q '^routing: on$' "$cfg" 2>/dev/null; then
   exit 0
 fi
 
