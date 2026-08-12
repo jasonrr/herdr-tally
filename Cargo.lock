@@ -1921,7 +1921,7 @@ dependencies = [
 
 [[package]]
 name = "tally"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "crossterm",
  "edtui",
