@@ -3,5 +3,8 @@
 
 .demo/
 
+# Personal dev-loop config — committing it auto-arms routing in teammates' sessions
+.claude/tally-dev-loop.md
+
 # macOS
 .DS_Store

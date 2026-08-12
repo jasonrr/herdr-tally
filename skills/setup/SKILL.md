@@ -43,4 +43,9 @@ Show the complete file content, get one final yes, then write `.claude/tally-dev
     - invariants: ...
     - simplicity: ...
 
-Recap in three lines: what was written and where; that `rm .claude/tally-dev-loop.md` (or `routing: off`) undoes everything; that the tally TUI footer now reflects this state. Suggest committing the file so the whole team gets the same loop.
+Recap in three lines: what was written and where; that `rm .claude/tally-dev-loop.md` (or `routing: off`) undoes everything; that the tally TUI footer now reflects this state.
+
+Then ask (one AskUserQuestion) whether to gitignore or commit the file:
+
+- **Gitignore (default)** — add `.claude/tally-dev-loop.md` to `.gitignore`. The loop stays personal to this checkout. This is the safe default because committing it means every teammate who *also* has the tally plugin gets the `<dev-loop>` block injected into their sessions on clone — arming routing for them without their own consent, which is exactly what the rest of this setup is careful to ask about first. (For a purely local ignore that doesn't touch a shared `.gitignore`, use `.git/info/exclude` instead.)
+- **Commit** — the whole team shares one loop. Choose this only when everyone works in this repo with the tally plugin and wants the same routing + lenses. Teammates without the plugin just see inert markdown.
