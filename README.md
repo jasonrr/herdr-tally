@@ -116,6 +116,30 @@ claude plugin install tally@tally
 
 Skills arrive namespaced — `/tally:brainstorm`, `/tally:debug`, `/tally:plan`, `/tally:build`, `/tally:review-branch`, `/tally:setup`. The plugin also ships a SessionStart hook that stays **silent** until a repo opts in: consent is the `.claude/tally-dev-loop.md` file that `/tally:setup` writes (delete it, or set `routing: off`, to disarm). If you previously symlinked `skills/*` into `~/.claude/skills/`, remove those symlinks so bare and namespaced names don't both resolve.
 
+### pi (coding-agent harness)
+
+tally ships as a [pi](https://pi.dev) package too. pi is MCP-averse, so pi agents
+reach the store through the `tally` CLI (a skill teaches the command surface)
+instead of the MCP server. `herdr plugin install` registers it automatically —
+best-effort Phase 2b of `scripts/install.sh`: if `pi` is on `PATH` it runs
+`pi install <plugin-root>` at user scope (set `TALLY_PI=-` to skip).
+
+To install by hand — or, once the repo is pushed to GitHub, from the git source
+(version-stable, preferred for sharing across machines):
+
+```bash
+pi install /path/to/herdr-tally                  # a local checkout
+pi install git:github.com/jasonrr/herdr-tally    # after push — no clone needed
+```
+
+You get two pi-only skills — `/skill:tally` (CLI store adapter) and `/skill:herdr`
+(worktree/pane primitives) — plus the shared dev-loop skills under bare names
+(`/skill:brainstorm`, `/skill:plan`, `/skill:build`, `/skill:debug`,
+`/skill:review-branch`; pi has no plugin namespace). The routing extension
+(`pi/extensions/routing.ts`) injects the dev-loop rules when a repo opts in via the
+**same** `.claude/tally-dev-loop.md` `routing: on` file Claude uses — one consent
+file governs both agents.
+
 ## Install from source (development)
 
 For local development, or if you just want to build and link the binary by hand —
