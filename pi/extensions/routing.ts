@@ -20,27 +20,26 @@ Trivial one-file changes and pure questions are exempt. When this rule triggers 
 
 // Mirrors hooks/session-start.sh: inject only when this repo opted in via
 // .claude/tally-dev-loop.md containing a `routing: on` line. Missing file or
-// missing line → routing off, silently (same as the hook's `exit 0`).
+// missing line → routing off, silently (same as the hook's `exit 0`). Exact
+// line match (not a multiline regex) so a CRLF `routing: on\r` line is
+// correctly treated as NOT matching, same as the hook's `grep '^routing: on$'`.
 function routingEnabled(cwd: string): boolean {
   try {
     const cfg = readFileSync(join(cwd, ".claude", "tally-dev-loop.md"), "utf8");
-    return /^routing: on$/m.test(cfg);
+    return cfg.split("\n").some((line) => line === "routing: on");
   } catch {
     return false;
   }
 }
 
 export default function (pi: ExtensionAPI) {
-  let injected = false; // once per session; reset for branch-safety
-
-  pi.on("session_start", async () => {
-    injected = false;
-  });
-
   pi.on("before_agent_start", async (event, ctx) => {
-    if (injected) return;
+    // Injected every turn (not once per session): pi resets systemPrompt to
+    // base before each call, so a once-per-session flag would only ever fire
+    // on turn 1. Content-guarded instead, so re-injection is a no-op if pi
+    // ever starts accumulating systemPrompt across turns.
     if (!routingEnabled(ctx.cwd)) return;
-    injected = true;
+    if (event.systemPrompt.includes(DEV_LOOP_BLOCK)) return;
     // Framework-free test marker: greppable on stderr in -p mode.
     console.error("[tally-routing] dev-loop routing injected");
     return { systemPrompt: `${event.systemPrompt}\n\n${DEV_LOOP_BLOCK}` };

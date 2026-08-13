@@ -26,6 +26,7 @@ Read before you write: `read` returns a `revision`; pass it back as `--expected-
 ```bash
 tally scratchpads create --name "Auth refactor plan" --content-file -    # reads stdin
 tally scratchpads read <id> --mode headings                             # outline first
+tally scratchpads append <id> --content "## Progress" --expected-revision <r>   # heading must exist before append-section can target it
 tally scratchpads append-section <id> --heading "Progress" --content "did X" --expected-revision <r>
 tally scratchpads list                                                  # ids + titles + [tags] — filter by eye
 ```
