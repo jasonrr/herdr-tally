@@ -1,11 +1,11 @@
 ---
 name: review-branch
-description: Whole-branch adversarial review before merge — scoped reviewers probe the live tree, findings carry verdicts and defined severities, p1s fixed in one consolidated pass. Use when a feature branch is complete (after /tally:build) or before any merge or PR.
+description: Whole-branch adversarial review before merge — runs against the open PR (build opens it), scoped reviewers probe the live tree, findings carry verdicts and defined severities, p1s fixed in one consolidated pass pushed to the PR. Use when a feature branch is complete (after /tally:build) or before merge.
 ---
 
 # Review branch
 
-One deep pass over `merge-base..HEAD`, sized to the diff. A false finding costs one fix dispatch; a missed p1 ships a bug — calibrate to that asymmetry, not away from it.
+One deep pass over `merge-base..HEAD` — the open PR's diff, sized to it. A false finding costs one fix dispatch; a missed p1 ships a bug — calibrate to that asymmetry, not away from it.
 
 ## Severity — definitions, not vibes
 
@@ -32,8 +32,8 @@ In herdr (`HERDR_ENV=1`), run reviewers as panes so the human can watch the prob
 
 ## Verdicts
 
-Verify each finding to a verdict, never to a silent rejection: **CONFIRMED** (you reproduced or traced it yourself) or **PLAUSIBLE** (you tried to refute it and couldn't). File both as tally todos — severity as priority, verdict in a comment. Drop a finding only when you can show it's wrong, and record why as a comment. Fix all p1s in ONE consolidated dispatch on `sonnet` — a fixer per finding costs more than the branch did — then one scoped re-review of that fix.
+Verify each finding to a verdict, never to a silent rejection: **CONFIRMED** (you reproduced or traced it yourself) or **PLAUSIBLE** (you tried to refute it and couldn't). File both as tally todos — severity as priority, verdict in a comment. Drop a finding only when you can show it's wrong, and record why as a comment. Fix all p1s in ONE consolidated dispatch on `sonnet` — a fixer per finding costs more than the branch did — then one scoped re-review of that fix; commit and push the consolidated fix to the PR branch as follow-up commits.
 
 ## Gate
 
-Run the full test suite and lint fresh, in this session, and read the output. Append one line per surprise the review surfaced to a `learnings`-tagged tally scratchpad (`pattern → consequence`; create it if missing). Then present the real options — merge, push + PR, or leave the branch — and wait for the user's choice. The p2/p3 follow-ups live in tally, not in your head. If `.claude/tally-dev-loop.md` doesn't exist, offer /tally:setup once in the closing summary.
+Run the full test suite and lint fresh, in this session, and read the output. Append one line per surprise the review surfaced to a `learnings`-tagged tally scratchpad (`pattern → consequence`; create it if missing). Then present the real options — the PR is already open, so: mark it ready / merge it / leave it for the user — and wait for the user's choice. The p2/p3 follow-ups live in tally, not in your head. If `.claude/tally-dev-loop.md` doesn't exist, offer /tally:setup once in the closing summary.

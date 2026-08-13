@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Turn an approved design into an executable plan — a plan doc in docs/plans/ (surfaced in tally's Plans tab) plus one tally todo per task. Use after /tally:brainstorm, once a design scratchpad exists.
+description: Turn an approved design into an executable plan — authored as a plan:<slug> scratchpad (surfaced beside the live todos) plus one tally todo per task; in herdr, dispatches the build into its own worktree. Use after /tally:brainstorm, once a design scratchpad exists.
 ---
 
 # Plan
@@ -9,9 +9,9 @@ Write a plan a fresh agent with zero context can execute. Every ambiguity you le
 
 A design is required input. If no `design`-tagged scratchpad is in context, `scratchpad_find` one and confirm it with the user; if none exists, run /tally:brainstorm first — do not write a plan from a cold request.
 
-## The plan doc
+## The plan (scratchpad)
 
-Write to `docs/plans/YYYY-MM-DD-<slug>.md` — tally surfaces this directory in its Plans tab, so the user reads it beside the live todos. Header: goal, design scratchpad id, branch name, and the verification command for the whole feature.
+Author the plan as a **`plan:<slug>` scratchpad** (`scratchpad_write`, tag `plan:<slug>`) — not a `docs/plans/` file. It is the narrative a fresh agent executes, and the shared store carries it across the worktree boundary the build runs in (a `docs/plans` file written in a worktree is invisible to the Plans tab until it merges to main). Header: goal, design scratchpad id, branch name (`<type>/<slug>`, type ∈ feat|fix|chore), and the verification command for the whole feature. `/tally:build` materializes this scratchpad to a committed `docs/plans/YYYY-MM-DD-<slug>.md` in the worktree, so it reaches the Plans tab on merge; in-flight it lives in the Scratchpads tab.
 
 ## Research before tasks
 
@@ -29,8 +29,16 @@ Size each task so it is independently implementable and reviewable — a reviewe
 
 ## Tally ledger
 
-Create one tally todo per task, tagged `plan:<slug>`, body pointing at the plan doc section. Encode ordering with blockers (`todo_add_blocker`). The plan doc is the narrative; todo state is the live ledger you and the user both watch.
+Create one tally todo per task, tagged `plan:<slug>`, body pointing at the scratchpad section. Encode ordering with blockers (`todo_add_blocker`). The scratchpad is the narrative; todo state is the live ledger you and the user both watch.
 
 ## Before handing off
 
-First reread the plan yourself for placeholders and interface mismatches. Then dispatch one fresh `sonnet` subagent whose only input is the plan doc path: "You are the zero-context implementer. List every place you would have to guess — missing file paths, undefined interfaces, placeholder steps, decisions the plan assumes you know." Every guess it returns is a plan defect: fix it in the doc before creating the tally todos. Then ask the user: execute via /tally:build (fresh subagent per task) or inline in this session.
+First reread the plan yourself for placeholders and interface mismatches. Then dispatch one fresh `sonnet` subagent whose only input is the plan scratchpad id: "You are the zero-context implementer. List every place you would have to guess — missing file paths, undefined interfaces, placeholder steps, decisions the plan assumes you know." Every guess it returns is a plan defect: fix it before creating the tally todos.
+
+Then hand off to the build:
+
+- **In herdr (`HERDR_ENV=1`):** one AskUserQuestion — dispatch to a new worktree / build inline here / defer.
+  - **Dispatch:** `herdr worktree create --cwd <repo-root> --branch <type>/<slug> --label "<title>" --no-focus`; read `.result.root_pane.pane_id` (workspace at `.result.workspace_id`, checkout at `.result.worktree.path`). Then `herdr agent prompt <pane-id> "<brief>"` with a self-contained brief: repo path (the worktree checkout), branch, the `plan:<slug>` scratchpad **id**, the whole-feature verify command, and one instruction — "run /tally:build for `plan:<slug>` through completion." Build owns the rest (materialize the plan file, implement task-by-task, open the PR, run review-branch, push fixes). No session history in the brief. Then **step back** — say so; the space's agent owns it and talks to the user directly. Don't `herdr agent wait` on it or mirror the pane; progress rides the tally todos + `build-log:<slug>` scratchpad.
+  - **Inline:** proceed to /tally:build in this session.
+  - **Defer:** stop; the `plan:<slug>` scratchpad + todos persist for later.
+- **Outside herdr:** `EnterWorktree`, then /tally:build inline.
