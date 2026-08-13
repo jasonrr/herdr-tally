@@ -1,8 +1,9 @@
 #!/bin/sh
 # install.sh — tally's herdr [[build]] step. Runs on every `herdr plugin install`
-# and re-link. Three phases:
+# and re-link. Four phases:
 #   1. fetch-or-build the binary (CRITICAL — aborts the install on failure).
 #   2. register the tally MCP server with Claude Code (best-effort).
+#   2b. register the pi package so pi sessions discover tally (best-effort).
 #   3. write the tally guidance block into ~/.claude/CLAUDE.md (best-effort).
 # Best-effort = a failure prints a manual-fix command and we still exit 0, so the
 # binary + panes always install even when `claude`/$HOME wiring can't complete.
@@ -67,6 +68,19 @@ if claude_bin=$(find_claude); then
 else
   echo "tally: 'claude' CLI not found on PATH. Register the MCP server with:" >&2
   echo "  $manual_mcp" >&2
+fi
+
+# --- 2b. pi package registration (best-effort) ---------------------------------
+# pi is MCP-averse — no server to add. Instead install this repo as a pi package
+# so pi sessions discover the tally skills + routing extension. User-global (no
+# -l) so every project's pi sees it. Never fatal.
+if command -v pi >/dev/null 2>&1; then
+  if pi install "$plugin_root" >/dev/null 2>&1; then
+    echo "tally: registered pi package -> $plugin_root"
+  else
+    echo "tally: could not register pi package automatically. Run:" >&2
+    echo "  pi install \"$plugin_root\"" >&2
+  fi
 fi
 
 # --- 3. guidance block in ~/.claude/CLAUDE.md (best-effort) ---------------------
