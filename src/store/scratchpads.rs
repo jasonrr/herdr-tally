@@ -389,6 +389,36 @@ impl Project {
         })
     }
 
+    /// Add tags in one revision bump, idempotent (no duplicates). Store-level
+    /// home for logic both the CLI and MCP adapters share.
+    pub fn add_scratchpad_tags(
+        &self,
+        id: &str,
+        add: &[String],
+        expected_revision: i64,
+    ) -> Result<Scratchpad> {
+        let (s, _) = self.read_scratchpad(id, "full", "", 0, 0)?;
+        let mut merged = s.tags.clone();
+        for t in add {
+            if !merged.contains(t) {
+                merged.push(t.clone());
+            }
+        }
+        self.update_scratchpad(id, expected_revision, None, None, Some(merged))
+    }
+
+    /// Remove tags in one revision bump. Absent tags are a no-op.
+    pub fn remove_scratchpad_tags(
+        &self,
+        id: &str,
+        drop: &[String],
+        expected_revision: i64,
+    ) -> Result<Scratchpad> {
+        let (s, _) = self.read_scratchpad(id, "full", "", 0, 0)?;
+        let keep: Vec<String> = s.tags.into_iter().filter(|t| !drop.contains(t)).collect();
+        self.update_scratchpad(id, expected_revision, None, None, Some(keep))
+    }
+
     pub fn rename_scratchpad(&self, id: &str, name: &str, exp_rev: i64) -> Result<Scratchpad> {
         self.mutate_pad(id, exp_rev, |s| {
             s.title = name.to_string();
@@ -819,6 +849,43 @@ mod tests {
             .unwrap();
         let tags = p.scratchpad_tags().unwrap();
         assert_eq!(tags, vec!["bar", "baz", "foo"]);
+    }
+
+    #[test]
+    fn test_add_scratchpad_tags_no_dupe() {
+        let p = new_project();
+        let s = p.create_scratchpad("x", "content", Vec::new()).unwrap();
+        let s = p
+            .add_scratchpad_tags(&s.id, &["a".into(), "b".into()], s.revision)
+            .unwrap();
+        assert_eq!(s.revision, 2);
+        let s = p
+            .add_scratchpad_tags(&s.id, &["b".into(), "c".into()], s.revision)
+            .unwrap();
+        assert_eq!(s.revision, 3);
+        assert_eq!(s.tags, vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn test_remove_scratchpad_tags() {
+        let p = new_project();
+        let s = p
+            .create_scratchpad("x", "content", vec!["a".into(), "b".into()])
+            .unwrap();
+        let s = p
+            .remove_scratchpad_tags(&s.id, &["b".into(), "zzz".into()], s.revision)
+            .unwrap();
+        assert_eq!(s.tags, vec!["a"]);
+    }
+
+    #[test]
+    fn test_add_scratchpad_tags_wrong_revision_errors() {
+        let p = new_project();
+        let s = p.create_scratchpad("x", "content", Vec::new()).unwrap();
+        assert!(
+            p.add_scratchpad_tags(&s.id, &["a".into()], s.revision + 1)
+                .is_err()
+        );
     }
 
     #[test]

@@ -58,6 +58,8 @@ const ID_TAKING: &[&str] = &[
     "unarchive",
     "delete",
     "save-to-file",
+    "add-tags",
+    "remove-tags",
 ];
 
 /// Go's `revisionRequired` set — the mutating ops that MUST be guarded (append
@@ -70,6 +72,8 @@ const REVISION_REQUIRED: &[&str] = &[
     "archive",
     "unarchive",
     "delete",
+    "add-tags",
+    "remove-tags",
 ];
 
 #[derive(Serialize)]
@@ -90,7 +94,7 @@ struct TailOut<'a> {
 pub(crate) fn run(args: &[String], store_root: Option<&Path>, out: &mut dyn Write) -> i32 {
     if args.is_empty() {
         return fail(
-            "usage: tally scratchpads <list|read|create|update|append|append-section|edit|rename|find|tail|clear|archive|unarchive|delete|save-to-file|load-from-file|tags>",
+            "usage: tally scratchpads <list|read|create|update|append|append-section|edit|rename|find|tail|clear|archive|unarchive|delete|save-to-file|load-from-file|tags|add-tags|remove-tags>",
         );
     }
     let sub = args[0].as_str();
@@ -209,6 +213,18 @@ pub(crate) fn run(args: &[String], store_root: Option<&Path>, out: &mut dyn Writ
                 Err(e) => return fail(&e.to_string()),
             }
         }
+        "add-tags" => match proj.add_scratchpad_tags(&id, &tags, expected_revision) {
+            Ok(s) => {
+                let _ = print_json(out, &s);
+            }
+            Err(e) => return fail(&e.to_string()),
+        },
+        "remove-tags" => match proj.remove_scratchpad_tags(&id, &tags, expected_revision) {
+            Ok(s) => {
+                let _ = print_json(out, &s);
+            }
+            Err(e) => return fail(&e.to_string()),
+        },
         "append" => match proj.append_scratchpad(&id, &body, expected_revision, newline) {
             Ok(s) => {
                 let _ = print_json(out, &s);

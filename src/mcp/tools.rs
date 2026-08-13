@@ -250,23 +250,13 @@ fn registry() -> Vec<Tool> {
             schema: obj(req(&["id", "tags", "expected_revision"]), json!({"id": prop("string", ""), "tags": arr(""), "expected_revision": prop("integer", "")})),
             run: |p, a| {
                 require_revision(a, "scratchpad_add_tags")?;
-                let (s, _) = p.read_scratchpad(&a.id, "full", "", 0, 0)?;
-                let mut merged = s.tags.clone();
-                for t in a.tags() {
-                    if !merged.contains(&t) {
-                        merged.push(t);
-                    }
-                }
-                val(p.update_scratchpad(&a.id, a.rev(), None, None, Some(merged))?)
+                val(p.add_scratchpad_tags(&a.id, &a.tags(), a.rev())?)
             } },
         Tool { name: "scratchpad_remove_tags", desc: "Remove tags in one revision bump.",
             schema: obj(req(&["id", "tags", "expected_revision"]), json!({"id": prop("string", ""), "tags": arr(""), "expected_revision": prop("integer", "")})),
             run: |p, a| {
                 require_revision(a, "scratchpad_remove_tags")?;
-                let (s, _) = p.read_scratchpad(&a.id, "full", "", 0, 0)?;
-                let drop = a.tags();
-                let keep: Vec<String> = s.tags.into_iter().filter(|t| !drop.contains(t)).collect();
-                val(p.update_scratchpad(&a.id, a.rev(), None, None, Some(keep))?)
+                val(p.remove_scratchpad_tags(&a.id, &a.tags(), a.rev())?)
             } },
         Tool { name: "scratchpad_append", desc: "Append content to the end.",
             schema: obj(req(&["id", "content"]), json!({"id": prop("string", ""), "content": prop("string", ""), "expected_revision": prop("integer", "optional guard"), "newline": prop("boolean", "")})),
