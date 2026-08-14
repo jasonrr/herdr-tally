@@ -134,19 +134,23 @@ fn git_project_root(dir: &Path) -> Option<PathBuf> {
 }
 
 impl Project {
+    /// The legacy whole-file JSON path. No longer read/written by the todos
+    /// store (that now goes through the automerge doc) — kept for Task 6's
+    /// migration, which reads this file as the pre-automerge source.
+    #[allow(dead_code)] // used by Task 6 migration
     pub(crate) fn todos_path(&self) -> PathBuf {
         self.dir.join("todos.json")
     }
 
     /// The directory holding this project's per-machine automerge snapshots
     /// (`automerge/<machine_hex>.automerge`), one file per machine.
-    // Reached only through amdoc.rs (and its tests) until Task 4 wires the
-    // entity read/write path into the adapters.
-    #[allow(dead_code)]
     pub(crate) fn am_dir(&self) -> PathBuf {
         self.dir.join("automerge")
     }
 
+    /// The legacy whole-file JSON path. No longer read/written by the
+    /// comments store — kept for Task 6's migration.
+    #[allow(dead_code)] // used by Task 6 migration
     pub(crate) fn comments_path(&self) -> PathBuf {
         self.dir.join("comments.json")
     }

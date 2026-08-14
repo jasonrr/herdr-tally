@@ -12,17 +12,17 @@
 // file per machine (no id collision, no persisted-id drift) while doubling as
 // the automerge actor so a machine's changes carry a stable authorship.
 // This is the storage core; every public item is a seam that Tasks 4–7 (entity
-// read/write, migration, adapters) call. Until they land, the non-test bin build
-// has no caller for them, so allow dead_code here — the tests below exercise the
-// whole surface, and removing it would orphan the infra the later tasks depend on.
-#![allow(dead_code)]
+// read/write, migration, adapters) call.
 
 use automerge::transaction::Transactable;
 use automerge::{ActorId, AutoCommit, ObjType, ROOT, ReadDoc};
+use autosurgeon::{hydrate_prop, reconcile_prop};
 
+use super::comments::CommentsFile;
 use super::errors::{Error, Result};
 use super::lock::{atomic_write, with_file_lock};
 use super::project::Project;
+use super::todos::TodosFile;
 
 /// Fixed genesis actor: the three root containers are created under THIS actor
 /// with deterministic ops, so every machine's fresh doc emits byte-identical
@@ -146,6 +146,39 @@ impl Project {
             Ok(r)
         })
     }
+}
+
+/// Hydrate the `todos` root map into a `TodosFile`. `load_doc`'s `ensure_root`
+/// guarantees the key is present on a doc it produced, but guard a missing key
+/// (e.g. a doc built by hand in a test) as an empty file rather than an error.
+pub(crate) fn load_todos_file(doc: &AutoCommit) -> Result<TodosFile> {
+    if doc.get(ROOT, "todos")?.is_none() {
+        return Ok(TodosFile::default());
+    }
+    Ok(hydrate_prop(doc, ROOT, "todos")?)
+}
+
+/// Reconcile a `TodosFile` into the `todos` root map. Identity-keyed list
+/// reconcile (`Todo::id` is `#[key]`) means this does not prune siblings
+/// written by another machine and merged in.
+pub(crate) fn save_todos_file(doc: &mut AutoCommit, tf: &TodosFile) -> Result<()> {
+    reconcile_prop(doc, ROOT, "todos", tf)?;
+    Ok(())
+}
+
+/// Hydrate the `comments` root map into a `CommentsFile`. Same missing-key
+/// guard as `load_todos_file`.
+pub(crate) fn load_comments_file(doc: &AutoCommit) -> Result<CommentsFile> {
+    if doc.get(ROOT, "comments")?.is_none() {
+        return Ok(CommentsFile::default());
+    }
+    Ok(hydrate_prop(doc, ROOT, "comments")?)
+}
+
+/// Reconcile a `CommentsFile` into the `comments` root map.
+pub(crate) fn save_comments_file(doc: &mut AutoCommit, cf: &CommentsFile) -> Result<()> {
+    reconcile_prop(doc, ROOT, "comments", cf)?;
+    Ok(())
 }
 
 #[cfg(test)]

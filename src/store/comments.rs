@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 
 use super::errors::{Error, Result};
 use super::ids::new_id;
-use super::lock::{atomic_write, with_file_lock};
 use super::project::Project;
 use super::todos::{epoch_from_rfc3339, format_rfc3339, now};
 
@@ -80,26 +79,15 @@ fn is_zero(n: &i64) -> bool {
 
 impl Project {
     fn load_comments(&self) -> Result<CommentsFile> {
-        let b = match std::fs::read(self.comments_path()) {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(CommentsFile::default());
-            }
-            Err(e) => return Err(e.into()),
-        };
-        Ok(serde_json::from_slice(&b)?)
-    }
-
-    fn save_comments(&self, cf: &CommentsFile) -> Result<()> {
-        let b = serde_json::to_vec_pretty(cf)?;
-        atomic_write(&self.comments_path(), &b)
+        crate::store::amdoc::load_comments_file(&self.load_doc()?)
     }
 
     fn mutate_comments(&self, f: impl FnOnce(&mut CommentsFile) -> Result<()>) -> Result<()> {
-        with_file_lock(&self.comments_path(), || {
-            let mut cf = self.load_comments()?;
+        self.with_doc(|doc| {
+            let mut cf = crate::store::amdoc::load_comments_file(doc)?;
             f(&mut cf)?;
-            self.save_comments(&cf)
+            crate::store::amdoc::save_comments_file(doc, &cf)?;
+            Ok(())
         })
     }
 
@@ -518,7 +506,8 @@ mod tests {
             text: "marked done".into(),
             github_comment_id: 0,
         });
-        tp.save_comments(&cf).unwrap();
+        tp.with_doc(|d| crate::store::amdoc::save_comments_file(d, &cf))
+            .unwrap();
 
         // cutoff excludes the 2000 note, keeps the fresh note; events off by default
         let cutoff = "2020-01-01T00:00:00Z";
@@ -587,7 +576,8 @@ mod tests {
                 github_comment_id: 0,
             });
         }
-        tp.save_comments(&cf).unwrap();
+        tp.with_doc(|d| crate::store::amdoc::save_comments_file(d, &cf))
+            .unwrap();
         // newest-first: the later-appended note wins the tie.
         let r = tp.recent_comments("", None, false).unwrap();
         assert_eq!(r[0].text, "second_appended");
@@ -631,7 +621,8 @@ mod tests {
                 github_comment_id: 0,
             });
         }
-        tp.save_comments(&cf).unwrap();
+        tp.with_doc(|d| crate::store::amdoc::save_comments_file(d, &cf))
+            .unwrap();
         // newest-commented target first: later file index (t_b) wins the tie.
         let sums = tp.comment_summaries().unwrap();
         assert_eq!(sums[0].target, "t_b");

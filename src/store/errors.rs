@@ -62,3 +62,15 @@ impl From<automerge::AutomergeError> for Error {
         Error::Other(e.to_string())
     }
 }
+
+impl From<autosurgeon::HydrateError> for Error {
+    fn from(e: autosurgeon::HydrateError) -> Self {
+        Error::Other(e.to_string())
+    }
+}
+
+impl From<autosurgeon::ReconcileError> for Error {
+    fn from(e: autosurgeon::ReconcileError) -> Self {
+        Error::Other(e.to_string())
+    }
+}

@@ -13,7 +13,6 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use super::errors::{Error, Result};
 use super::ids::new_id;
-use super::lock::{atomic_write, with_file_lock};
 use super::project::Project;
 
 /// Advisory lock breadcrumb on a todo. lock_todo overwrites unconditionally —
@@ -253,30 +252,22 @@ impl TodosFile {
 
 impl Project {
     fn load_todos(&self) -> Result<TodosFile> {
-        let b = match std::fs::read(self.todos_path()) {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(TodosFile::default()),
-            Err(e) => return Err(e.into()),
-        };
-        let mut tf: TodosFile = serde_json::from_slice(&b)?;
+        let doc = self.load_doc()?;
+        let mut tf = crate::store::amdoc::load_todos_file(&doc)?;
         for t in &mut tf.todos {
             t.priority = migrate_legacy_priority(&t.priority);
         }
         Ok(tf)
     }
 
-    fn save_todos(&self, tf: &mut TodosFile) -> Result<()> {
-        tf.revision += 1;
-        let b = serde_json::to_vec_pretty(tf)?;
-        atomic_write(&self.todos_path(), &b)
-    }
-
-    /// Loads, applies f, saves — all under the file lock.
+    /// Loads, applies f, saves — all under the doc's flock.
     fn mutate_todos(&self, f: impl FnOnce(&mut TodosFile) -> Result<()>) -> Result<()> {
-        with_file_lock(&self.todos_path(), || {
-            let mut tf = self.load_todos()?;
+        self.with_doc(|doc| {
+            let mut tf = crate::store::amdoc::load_todos_file(doc)?;
             f(&mut tf)?;
-            self.save_todos(&mut tf)
+            tf.revision += 1;
+            crate::store::amdoc::save_todos_file(doc, &tf)?;
+            Ok(())
         })
     }
 
@@ -956,65 +947,26 @@ mod tests {
         .expect("None guard must never fail");
     }
 
-    // Migration guard: a todos.json exactly as the Go binary marshals it
-    // (MarshalIndent, no omitempty, explicit nulls) must round-trip through
-    // the Rust store.
+    // Legacy H/M/L priority self-heal, now exercised against the doc directly
+    // (load_todos reads the automerge doc, not todos.json — legacy-JSON read
+    // coverage lives in Task 6's migration test).
     #[test]
-    fn test_reads_go_written_todos_json() {
+    fn load_migrates_legacy_priority_from_doc() {
         let p = new_project();
-        let fixture = r#"{
-  "revision": 3,
-  "todos": [
-    {
-      "id": "t_go1",
-      "title": "From Go",
-      "body": "left by the Go binary",
-      "status": "open",
-      "priority": "medium",
-      "tags": ["a", "b"],
-      "blockers": [],
-      "lock": null,
-      "created": "2026-01-02T03:04:05Z",
-      "updated": "2026-01-02T03:04:05Z",
-      "completed": null
-    },
-    {
-      "id": "t_go2",
-      "title": "Locked done",
-      "body": "",
-      "status": "completed",
-      "priority": "high",
-      "tags": [],
-      "blockers": ["t_go1"],
-      "lock": {
-        "owner": "claude",
-        "pid": 42,
-        "at": "2026-01-02T03:04:06Z"
-      },
-      "created": "2026-01-02T03:04:05Z",
-      "updated": "2026-01-02T03:04:07Z",
-      "completed": "2026-01-02T03:04:07Z"
-    }
-  ]
-}"#;
-        std::fs::write(p.todos_path(), fixture).unwrap();
-        let t1 = p.get_todo("t_go1").unwrap();
-        assert_eq!(t1.tags, vec!["a", "b"]);
-        assert!(t1.lock.is_none());
-        // Legacy H/M/L on disk is upgraded to the P0–P3 scale at load.
-        assert_eq!(t1.priority, "p2"); // medium -> p2
-        let t2 = p.get_todo("t_go2").unwrap();
-        assert_eq!(t2.priority, "p1"); // high -> p1
-        assert_eq!(t2.lock.as_ref().map(|l| l.owner.as_str()), Some("claude"));
-        assert_eq!(t2.completed.as_deref(), Some("2026-01-02T03:04:07Z"));
-        assert_eq!(t2.blockers, vec!["t_go1"]);
-        // Attribution fields absent in the Go file default to empty (not backfilled).
-        assert_eq!(t1.created_by, "");
-        assert_eq!(t1.updated_by, "");
-        // And a Rust-side mutation on top of the Go file must not lose data.
-        let up = p.add_todo_tag("t_go2", "ported").unwrap();
-        assert!(up.tags.contains(&"ported".to_string()));
-        assert!(p.get_todo("t_go1").is_ok());
+        p.with_doc(|d| {
+            let tf = TodosFile {
+                revision: 0,
+                todos: vec![Todo {
+                    id: "t_legacy".into(),
+                    priority: "high".into(),
+                    ..Default::default()
+                }],
+            };
+            crate::store::amdoc::save_todos_file(d, &tf)
+        })
+        .unwrap();
+        let t = p.get_todo("t_legacy").unwrap();
+        assert_eq!(t.priority, "p1"); // high -> p1
     }
 
     #[test]
