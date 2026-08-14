@@ -117,6 +117,10 @@ impl Project {
         }
         files.sort(); // determinism (merge is order-independent regardless)
 
+        // Our own snapshot filename — a valid-but-unmergeable OWN file must not
+        // be skipped (save_doc would then clobber its recoverable bytes).
+        let our_file = format!("{}.automerge", self.machine_hex()?);
+
         let mut doc: Option<AutoCommit> = None;
         for f in &files {
             let loaded = std::fs::read(f)
@@ -127,6 +131,14 @@ impl Project {
                     None => doc = Some(d),
                     Some(base) => {
                         if let Err(e) = base.merge(&mut d) {
+                            if f.file_name().is_some_and(|n| n == our_file.as_str()) {
+                                // Our own file parsed but won't merge: skipping it
+                                // would let save_doc overwrite recoverable data.
+                                return Err(Error::Other(format!(
+                                    "our own snapshot {} won't merge ({e}) — not overwriting",
+                                    f.display()
+                                )));
+                            }
                             eprintln!(
                                 "tally: skipping snapshot {} that won't merge: {e}",
                                 f.display()
@@ -334,7 +346,9 @@ fn rename_migrated(path: &std::path::Path) -> Result<()> {
 /// reconcile skips) onto its automerge map object, so a FRESH migration doc
 /// doesn't silently drop them. Todos are matched by `id` (reconcile inserts in
 /// Vec order, but id-matching is robust against any future ordering change).
-/// Authored under whatever actor is active — the genesis actor during migration.
+/// Authored under whatever actor is active — the machine actor during migration
+/// (`migrate_if_needed` sets it right after `ensure_root`, so only the genesis
+/// containers are genesis-authored; content, incl. these extras, is per-machine).
 fn preserve_todo_extras(doc: &mut AutoCommit, tf: &TodosFile) -> Result<()> {
     let (_, todos_map) = doc
         .get(ROOT, "todos")?
