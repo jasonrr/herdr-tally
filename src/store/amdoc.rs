@@ -95,6 +95,14 @@ impl Project {
     /// Loads the merged view of every machine's snapshot: read each
     /// `automerge/*.automerge` file and merge them into one doc, run genesis,
     /// then switch to the machine actor for the caller's edits.
+    ///
+    /// P1: a snapshot file corrupted or truncated mid-sync (Dropbox/iCloud,
+    /// disk-full, kill-during-write) must not brick every store operation on
+    /// every machine. Each file is read+loaded independently; a per-file read
+    /// or merge failure is logged to stderr and that file is skipped, not
+    /// propagated. Only when files were present but NONE of them loaded do we
+    /// fail loudly — silently falling back to an empty doc would then have
+    /// `save_doc` clobber our own file with nothing.
     pub(crate) fn load_doc(&self) -> Result<AutoCommit> {
         self.migrate_if_needed()?;
 
@@ -109,15 +117,41 @@ impl Project {
         }
         files.sort(); // determinism (merge is order-independent regardless)
 
-        let mut doc = if files.is_empty() {
-            AutoCommit::new()
-        } else {
-            let mut doc = AutoCommit::load(&std::fs::read(&files[0])?)?;
-            for f in &files[1..] {
-                let mut other = AutoCommit::load(&std::fs::read(f)?)?;
-                doc.merge(&mut other)?;
+        let mut doc: Option<AutoCommit> = None;
+        for f in &files {
+            let loaded = std::fs::read(f)
+                .map_err(Error::from)
+                .and_then(|b| AutoCommit::load(&b).map_err(Error::from));
+            match loaded {
+                Ok(mut d) => match doc.as_mut() {
+                    None => doc = Some(d),
+                    Some(base) => {
+                        if let Err(e) = base.merge(&mut d) {
+                            eprintln!(
+                                "tally: skipping snapshot {} that won't merge: {e}",
+                                f.display()
+                            );
+                        }
+                    }
+                },
+                Err(e) => {
+                    eprintln!("tally: skipping unreadable snapshot {}: {e}", f.display());
+                }
             }
-            doc
+        }
+        let mut doc = match doc {
+            Some(d) => d,
+            // No files loaded but files WERE present => all corrupt. Do NOT
+            // silently genesis an empty doc (save_doc would then clobber our
+            // own file). Fail loud.
+            None if !files.is_empty() => {
+                return Err(Error::Other(format!(
+                    "all {} snapshot file(s) in {} are unreadable (partial sync?) — not overwriting",
+                    files.len(),
+                    self.am_dir().display()
+                )));
+            }
+            None => AutoCommit::new(), // genuinely fresh: no files
         };
 
         self.ensure_root(&mut doc)?;
@@ -140,14 +174,17 @@ impl Project {
     /// True iff `am_dir` holds at least one `*.automerge` snapshot file. This is
     /// the "already migrated / genesis saved" signal — NOT `am_dir().exists()`,
     /// which `with_doc`'s lock creates as an empty dir before migration runs
-    /// (see `migrate_if_needed`). An absent `am_dir` reads as no snapshot.
-    fn has_snapshot(&self) -> bool {
-        std::fs::read_dir(self.am_dir())
-            .map(|rd| {
-                rd.filter_map(|e| e.ok())
-                    .any(|e| e.path().extension().is_some_and(|x| x == "automerge"))
-            })
-            .unwrap_or(false)
+    /// (see `migrate_if_needed`). An absent `am_dir` reads as no snapshot; any
+    /// OTHER read_dir error (permission, EIO) surfaces instead of silently
+    /// reading as "not migrated" (P3).
+    fn has_snapshot(&self) -> Result<bool> {
+        match std::fs::read_dir(self.am_dir()) {
+            Ok(rd) => Ok(rd
+                .filter_map(|e| e.ok())
+                .any(|e| e.path().extension().is_some_and(|x| x == "automerge"))),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// One-time JSON->automerge migration, run as the FIRST line of `load_doc`.
@@ -155,11 +192,15 @@ impl Project {
     /// CURRENT legacy JSON/markdown state (one snapshot, not from history) and
     /// renames the legacy files to `*.migrated` backups.
     ///
-    /// Convergence (R2): the migration authors ALL inserts under the FIXED
-    /// genesis actor (no `set_actor`), so two machines migrating byte-identical
-    /// synced legacy files emit identical change hashes that automerge dedups on
-    /// merge — no duplicated todos/pads. If content differs, ops differ and they
-    /// correctly union.
+    /// Convergence (R2, revised): the root containers are created under the
+    /// FIXED genesis actor (identical object-ids across machines), but every
+    /// migrated todo/comment/pad is authored under THIS machine's actor
+    /// (`set_actor` runs right after `ensure_root`). Two machines migrating
+    /// DIVERGENT legacy files then union cleanly instead of colliding as
+    /// `DuplicateSeqNumber` under a shared actor+seq. Two machines migrating
+    /// byte-identical legacy files may now produce a duplicate copy rather
+    /// than dedup — a recoverable outcome, unlike the outage the shared-actor
+    /// design produced.
     pub(crate) fn migrate_if_needed(&self) -> Result<()> {
         // A snapshot file present => already migrated, or a fresh doc was saved.
         // NOTE: gate on a `*.automerge` FILE, not `am_dir().exists()`: with_doc
@@ -169,7 +210,7 @@ impl Project {
         // get here; an `exists()` sentinel would then false-positive and skip
         // migration, orphaning the legacy store. The mkdir never makes a snapshot
         // file, so this check is immune. Cheap path: no lock beyond the readdir.
-        if self.has_snapshot() {
+        if self.has_snapshot()? {
             return Ok(());
         }
 
@@ -207,15 +248,23 @@ impl Project {
         with_file_lock(&self.dir.join("migrate"), || {
             // Double-checked locking: another process may have migrated between
             // the pre-lock check and acquiring the lock. Same snapshot-file gate.
-            if self.has_snapshot() {
+            if self.has_snapshot()? {
                 return Ok(());
             }
 
             // Genesis containers under the FIXED genesis actor; ensure_root
-            // leaves that actor active, and we deliberately do NOT set the
-            // machine actor — every migration insert stays genesis-authored.
+            // leaves that actor active so the three root containers keep
+            // identical object-ids across machines. CONTENT is different:
+            // switch to the machine actor before inserting any migrated
+            // todos/comments/pads, so divergent cross-machine migrations
+            // union on merge instead of colliding as DuplicateSeqNumber
+            // under the shared genesis actor+seq (P1 — reproduced by
+            // `concurrent_migration_merges_cleanly`). Identical independent
+            // migrations may now duplicate rather than dedup; that's the
+            // correct, recoverable tradeoff versus a bricked store.
             let mut doc = AutoCommit::new();
             self.ensure_root(&mut doc)?;
+            doc.set_actor(self.machine_actor()?);
 
             if todos_p.exists() {
                 let bytes = std::fs::read(&todos_p)?;
@@ -486,7 +535,9 @@ pub(crate) fn load_pad(doc: &AutoCommit, id: &str) -> Result<Option<Scratchpad>>
 pub(crate) fn save_pad(doc: &mut AutoCommit, s: &Scratchpad) -> Result<()> {
     let sp = scratchpads_obj(doc)?;
     reconcile_prop(doc, &sp, s.id.as_str(), s)?; // metadata only; content is skipped
-    let (_, pad_map) = doc.get(&sp, s.id.as_str())?.unwrap();
+    let (_, pad_map) = doc
+        .get(&sp, s.id.as_str())?
+        .ok_or_else(|| Error::Other("pad map missing after reconcile".into()))?;
     // Get-or-create the Text child; reusing it on update keeps the CRDT history.
     let text_obj = match doc.get(&pad_map, "content")? {
         Some((_, obj)) => obj,
@@ -630,9 +681,13 @@ mod tests {
     fn migrates_legacy_store() {
         let p = new_project();
 
-        // todos.json: one todo, legacy "high" priority + an unknown field.
+        // todos.json: one todo, legacy "high" priority + an unknown scalar
+        // field AND a nested object (with a nested array inside it), to
+        // exercise put_json's Object/Array/Bool/Number recursion, not just
+        // the string-scalar case.
         let todos_json = r#"{"revision":2,"todos":[
-            {"id":"t_mig","title":"Legacy todo","priority":"high","future_field":"keepme"}
+            {"id":"t_mig","title":"Legacy todo","priority":"high","future_field":"keepme",
+             "future_obj":{"a":1,"b":[true,"x"]}}
         ]}"#;
         std::fs::write(p.todos_path(), todos_json).unwrap();
         // comments.json: one note on that todo.
@@ -663,6 +718,30 @@ mod tests {
             ff.and_then(|(v, _)| v.to_str().map(str::to_string)),
             Some("keepme".to_string()),
             "unknown todo field must survive migration (R4)"
+        );
+
+        // Coverage gap: the nested `future_obj` (Object + Array + Bool +
+        // Number recursion in put_json) must also survive migration, read
+        // back low-level from the todo's automerge map.
+        let (_, fo) = doc
+            .get(&elem, "future_obj")
+            .unwrap()
+            .expect("future_obj key must exist");
+        let (a_val, _) = doc.get(&fo, "a").unwrap().expect("future_obj.a");
+        assert_eq!(a_val.to_i64(), Some(1), "future_obj.a must round-trip as 1");
+        let (_, b_list) = doc.get(&fo, "b").unwrap().expect("future_obj.b");
+        assert_eq!(doc.length(&b_list), 2, "future_obj.b must have 2 elements");
+        let (b0, _) = doc.get(&b_list, 0).unwrap().expect("future_obj.b[0]");
+        assert_eq!(
+            b0.to_bool(),
+            Some(true),
+            "future_obj.b[0] must round-trip as bool true"
+        );
+        let (b1, _) = doc.get(&b_list, 1).unwrap().expect("future_obj.b[1]");
+        assert_eq!(
+            b1.to_str(),
+            Some("x"),
+            "future_obj.b[1] must round-trip as string \"x\""
         );
 
         // Comment migrated.
@@ -749,55 +828,174 @@ mod tests {
         );
     }
 
-    // R2 convergence: two independent machines migrating the SAME byte-identical
-    // legacy files under the genesis actor produce identical change hashes, so
-    // merging their snapshots dedups — todo/comment/pad counts stay 1, not 2. A
-    // doubled count would mean migration is nondeterministic (STOP condition).
-    // Covers all three entity types (todos, comments, pads) since each has its
-    // own write path (list reconcile, and save_pad's map key + Text child).
-    #[test]
-    fn concurrent_migration_no_duplicates() {
-        let todos = r#"{"revision":1,"todos":[{"id":"t_1","title":"same","priority":"p2"}]}"#;
-        let comments =
-            r#"{"comments":[{"id":"c_1","target":"t_1","kind":"note","text":"same note"}]}"#;
-        let pad_md = "---\nid: s_1\ntitle: Same Pad\ntags: [a]\nstatus: active\nrevision: 1\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n---\n# Same Pad\n\nsame body\n";
-
-        // Two "machines": separate store roots, byte-identical legacy input.
-        let seed = |proj: &crate::store::testutil::TestProject| {
-            std::fs::write(proj.todos_path(), todos).unwrap();
-            std::fs::write(proj.comments_path(), comments).unwrap();
-            std::fs::write(proj.scratch_dir().join("s_1.md"), pad_md).unwrap();
-        };
-        let a = new_project();
-        let b = new_project();
-        seed(&a);
-        seed(&b);
-        a.load_doc().unwrap(); // migrates independently
-        b.load_doc().unwrap(); // migrates independently
-
-        // Merge B's snapshot(s) into A's doc.
-        let mut da = a.load_doc().unwrap();
-        for entry in std::fs::read_dir(b.am_dir()).unwrap() {
-            let path = entry.unwrap().path();
-            if path.extension().is_some_and(|x| x == "automerge") {
-                let mut other = AutoCommit::load(&std::fs::read(&path).unwrap()).unwrap();
-                da.merge(&mut other).unwrap();
-            }
+    // Manually build a "machine B" migration doc: genesis under the fixed
+    // actor (matching container object-ids), content under an EXPLICIT
+    // distinct actor. Real machines get this distinctness for free from
+    // `gethostuuid`; two `Project`s in one test process share the real host
+    // id, so this mirrors `two_machines_merge`'s explicit-actor pattern
+    // rather than calling `migrate_if_needed` twice in-process (which would
+    // collide on the test host's own actor for a reason unrelated to the fix
+    // under test).
+    fn other_machine_migrated_doc(
+        p: &crate::store::testutil::TestProject,
+        actor: [u8; 16],
+        todos_json: &str,
+        comments_json: Option<&str>,
+        pad_md: Option<&str>,
+    ) -> AutoCommit {
+        let mut doc = AutoCommit::new();
+        p.ensure_root(&mut doc).unwrap();
+        doc.set_actor(ActorId::from(actor));
+        let tf: TodosFile = serde_json::from_str(todos_json).unwrap();
+        save_todos_file(&mut doc, &tf).unwrap();
+        if let Some(cj) = comments_json {
+            let cf: CommentsFile = serde_json::from_str(cj).unwrap();
+            save_comments_file(&mut doc, &cf).unwrap();
         }
+        if let Some(md) = pad_md {
+            save_pad(&mut doc, &parse_pad(md.as_bytes())).unwrap();
+        }
+        doc
+    }
 
-        let titles = todo_titles(&da);
+    // P1 regression: migration content must be authored under the MACHINE
+    // actor (only the container genesis stays on the fixed genesis actor).
+    // Two machines migrating DIVERGENT legacy todos.json files must union on
+    // merge, not collide. Before the `set_actor` fix, both machines' migrated
+    // content was authored under the same fixed genesis actor+seq, so this
+    // merge failed with `DuplicateSeqNumber`. Covers all three entity types
+    // (todos, comments, pads) the same way `concurrent_migration_no_duplicates`
+    // (now renamed) did, but with content that actually differs across
+    // machines — the case that reproduces the outage.
+    #[test]
+    fn concurrent_migration_merges_cleanly() {
+        let todos_a = r#"{"revision":1,"todos":[{"id":"t_a","title":"A","priority":"p2"}]}"#;
+        let todos_b = r#"{"revision":1,"todos":[{"id":"t_b","title":"B","priority":"p2"}]}"#;
+        let comments_a =
+            r#"{"comments":[{"id":"c_a","target":"t_a","kind":"note","text":"note A"}]}"#;
+        let comments_b =
+            r#"{"comments":[{"id":"c_b","target":"t_b","kind":"note","text":"note B"}]}"#;
+        let pad_a = "---\nid: s_a\ntitle: Pad A\ntags: [a]\nstatus: active\nrevision: 1\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n---\n# Pad A\n\nbody A\n";
+        let pad_b = "---\nid: s_b\ntitle: Pad B\ntags: [a]\nstatus: active\nrevision: 1\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n---\n# Pad B\n\nbody B\n";
+
+        // Machine A: real migration through the real machine actor.
+        let a = new_project();
+        std::fs::write(a.todos_path(), todos_a).unwrap();
+        std::fs::write(a.comments_path(), comments_a).unwrap();
+        std::fs::write(a.scratch_dir().join("s_a.md"), pad_a).unwrap();
+        let mut da = a.load_doc().unwrap(); // migrates
+
+        // Machine B: simulated migration under a distinct explicit actor.
+        let mut db =
+            other_machine_migrated_doc(&a, [9u8; 16], todos_b, Some(comments_b), Some(pad_b));
+
+        da.merge(&mut db)
+            .expect("divergent per-machine migrations must merge, not DuplicateSeqNumber");
+
+        let mut titles = todo_titles(&da);
+        titles.sort();
         assert_eq!(
             titles,
-            vec!["same".to_string()],
-            "todos must dedup on merge, got {titles:?}"
+            vec!["A".to_string(), "B".to_string()],
+            "both machines' migrated todos must survive the merge (union), got {titles:?}"
         );
         assert_eq!(
             comment_count(&da),
-            1,
-            "comments must dedup on merge (genesis-authored)"
+            2,
+            "both machines' migrated comments must survive the merge"
         );
-        let pads = pad_ids(&da).unwrap();
-        assert_eq!(pads, vec!["s_1".to_string()], "pads must dedup on merge");
+        let mut pads = pad_ids(&da).unwrap();
+        pads.sort();
+        assert_eq!(
+            pads,
+            vec!["s_a".to_string(), "s_b".to_string()],
+            "both machines' migrated pads must survive the merge"
+        );
+    }
+
+    // Companion case: two machines migrating byte-IDENTICAL legacy files no
+    // longer need to dedup to a single copy now that content is authored
+    // under the machine actor — a duplicate is the correct, non-catastrophic
+    // tradeoff. Assert only that merge succeeds and at least one copy exists.
+    #[test]
+    fn concurrent_migration_identical_content_merges_ok() {
+        let todos = r#"{"revision":1,"todos":[{"id":"t_1","title":"same","priority":"p2"}]}"#;
+
+        let a = new_project();
+        std::fs::write(a.todos_path(), todos).unwrap();
+        let mut da = a.load_doc().unwrap(); // migrates
+
+        let mut db = other_machine_migrated_doc(&a, [9u8; 16], todos, None, None);
+
+        da.merge(&mut db)
+            .expect("identical-content migration must merge without error");
+
+        assert!(
+            !todo_titles(&da).is_empty(),
+            "at least one copy of the migrated todo must survive"
+        );
+    }
+
+    // P1 regression: one corrupted/truncated snapshot file must not brick the
+    // whole store. Seed a valid todo (our own file), plant a SECOND machine's
+    // file the same way `two_machines_merge` does, then corrupt that second
+    // file. `load_doc` must skip it and still return our own content.
+    #[test]
+    fn load_doc_skips_corrupt_snapshot() {
+        let p = new_project();
+        p.with_doc(|doc| push_todo(doc, "ours")).unwrap();
+
+        // A second machine's file, valid at first...
+        let mut b = AutoCommit::new();
+        p.ensure_root(&mut b).unwrap();
+        b.set_actor(ActorId::from([9u8; 16]));
+        push_todo(&mut b, "theirs").unwrap();
+        let bytes = b.save();
+        let other_path = p
+            .am_dir()
+            .join("00000000000000000000000000000009.automerge");
+        std::fs::write(&other_path, bytes).unwrap();
+
+        // ...then truncate/corrupt it.
+        std::fs::write(&other_path, b"not an automerge file, truncated garbage").unwrap();
+
+        let doc = p
+            .load_doc()
+            .expect("a corrupt sibling snapshot must not error load_doc");
+        let titles = todo_titles(&doc);
+        assert_eq!(
+            titles,
+            vec!["ours".to_string()],
+            "our own valid snapshot must still load with the corrupt one skipped"
+        );
+    }
+
+    // P1 regression: if EVERY snapshot file is unreadable, `load_doc` must
+    // error loudly rather than silently returning an empty doc (which would
+    // then get saved over the actual data on the next write).
+    #[test]
+    fn load_doc_errors_when_all_snapshots_corrupt() {
+        let p = new_project();
+        p.with_doc(|doc| push_todo(doc, "ours")).unwrap();
+
+        // Corrupt our OWN (only) snapshot file.
+        let mut files: Vec<_> = std::fs::read_dir(p.am_dir())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "automerge"))
+            .collect();
+        assert_eq!(files.len(), 1, "precondition: exactly one snapshot file");
+        std::fs::write(files.remove(0), b"garbage").unwrap();
+
+        let err = p
+            .load_doc()
+            .expect_err("all snapshot files corrupt must be a loud error, not an empty doc");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("unreadable") || msg.contains("not overwriting"),
+            "error should explain the all-corrupt condition: {msg}"
+        );
     }
 
     // Two sequential mutations on the same project write to the SAME owner file
