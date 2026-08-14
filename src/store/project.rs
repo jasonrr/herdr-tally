@@ -135,9 +135,8 @@ fn git_project_root(dir: &Path) -> Option<PathBuf> {
 
 impl Project {
     /// The legacy whole-file JSON path. No longer read/written by the todos
-    /// store (that now goes through the automerge doc) — kept for Task 6's
-    /// migration, which reads this file as the pre-automerge source.
-    #[allow(dead_code)] // used by Task 6 migration
+    /// store (that now goes through the automerge doc) — read once by
+    /// `migrate_if_needed` as the pre-automerge source, then kept as a backup.
     pub(crate) fn todos_path(&self) -> PathBuf {
         self.dir.join("todos.json")
     }
@@ -149,8 +148,7 @@ impl Project {
     }
 
     /// The legacy whole-file JSON path. No longer read/written by the
-    /// comments store — kept for Task 6's migration.
-    #[allow(dead_code)] // used by Task 6 migration
+    /// comments store — read once by `migrate_if_needed`, then kept as a backup.
     pub(crate) fn comments_path(&self) -> PathBuf {
         self.dir.join("comments.json")
     }
@@ -163,7 +161,8 @@ impl Project {
         super::sync::parse_repo(&url)
     }
 
-    #[allow(dead_code)] // used by Task 6 migration (reads legacy scratchpads/*.md)
+    /// The legacy scratchpad markdown directory. Read once by
+    /// `migrate_if_needed` (each `*.md` parsed into the doc), then kept as backups.
     pub(crate) fn scratch_dir(&self) -> PathBuf {
         self.dir.join("scratchpads")
     }

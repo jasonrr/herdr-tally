@@ -134,8 +134,10 @@ pub use todo_def::Todo;
 pub(crate) struct TodosFile {
     #[serde(rename = "revision")]
     revision: i64,
+    // pub(crate) so the migration (amdoc.rs) can normalize priorities and walk
+    // `extra` after deserializing a legacy todos.json.
     #[serde(rename = "todos", deserialize_with = "null_default")]
-    todos: Vec<Todo>,
+    pub(crate) todos: Vec<Todo>,
 }
 
 /// Go's json.Unmarshal turns JSON null into a nil slice, which the store then
@@ -619,7 +621,9 @@ fn normalize_priority(raw: &str) -> Result<String> {
 /// ponytail: one-shot legacy upgrade — old H/M/L stores map to the P0–P3 scale
 /// at load, so they self-heal on the next save. Delete once no legacy values
 /// remain on disk. Fresh writes go through normalize_priority (P0–P3 only).
-fn migrate_legacy_priority(p: &str) -> String {
+/// pub(crate) so the one-time migration (amdoc.rs) normalizes on the way into
+/// the doc, not just on read.
+pub(crate) fn migrate_legacy_priority(p: &str) -> String {
     match p {
         "high" => "p1",
         "medium" => "p2",

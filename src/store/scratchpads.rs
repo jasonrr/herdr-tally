@@ -91,7 +91,6 @@ pub struct Match {
 /// markdown body. ponytail: hand-rolled parser for a fixed 7-field header,
 /// avoids a YAML dependency; widen only if the header schema grows. Unlike the
 /// Go version this can't fail (Go's error return was always nil).
-#[allow(dead_code)] // used by Task 6 migration (parses legacy scratchpads/*.md)
 pub(crate) fn parse_pad(b: &[u8]) -> Scratchpad {
     let text = String::from_utf8_lossy(b);
     let mut s = Scratchpad {
