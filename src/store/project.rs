@@ -138,6 +138,15 @@ impl Project {
         self.dir.join("todos.json")
     }
 
+    /// The directory holding this project's per-machine automerge snapshots
+    /// (`automerge/<machine_hex>.automerge`), one file per machine.
+    // Reached only through amdoc.rs (and its tests) until Task 4 wires the
+    // entity read/write path into the adapters.
+    #[allow(dead_code)]
+    pub(crate) fn am_dir(&self) -> PathBuf {
+        self.dir.join("automerge")
+    }
+
     pub(crate) fn comments_path(&self) -> PathBuf {
         self.dir.join("comments.json")
     }

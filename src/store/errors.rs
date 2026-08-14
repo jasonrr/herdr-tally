@@ -54,3 +54,11 @@ impl From<serde_json::Error> for Error {
         Error::Json(e)
     }
 }
+
+// The automerge doc infra (src/store/amdoc.rs) uses `?` on automerge ops; carry
+// their errors as ad-hoc Other messages (same as the inline fmt.Errorf strings).
+impl From<automerge::AutomergeError> for Error {
+    fn from(e: automerge::AutomergeError) -> Self {
+        Error::Other(e.to_string())
+    }
+}
