@@ -1,6 +1,6 @@
 {
   "name": "tally",
-  "version": "0.1.12",
+  "version": "0.1.15",
   "description": "Project-scoped todos, scratchpads & plans, plus the tally dev loop — as a pi package.",
   "keywords": ["pi-package"],
   "license": "MIT",
