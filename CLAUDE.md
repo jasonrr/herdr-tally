@@ -11,10 +11,17 @@ store methods. Logic and tests live in store. If CLI and MCP disagree, that's a 
 
 ## Invariants — break these and data orphans or agents break
 
+The store is an embedded automerge (CRDT) doc, persisted as one full-doc snapshot
+file per machine at `projects/<key>/automerge/<machine-hex>.automerge` — each
+machine is the sole writer of its own file; loading a project merges every
+machine's file.
+
 - **Store key format is frozen**: `<base>-<sha1(abspath)[:8]>`, project root via
   `git rev-parse --path-format=absolute --git-common-dir` (worktrees share one store),
   symlinks resolved. The golden test in `src/store/project.rs` pins it — the store is
-  keyed by this, so any change orphans existing data. Never "fix" that test.
+  keyed by this, so any change orphans existing data. Never "fix" that test. The
+  `automerge/` dir lives inside that keyed project dir, so this key/layout freeze
+  still holds.
 - **MCP tool names are fixed** (`todo_*` / `scratchpad_*` / `comment_*`, 38 tools) — agent prompts
   depend on them. Newline-delimited JSON-RPC 2.0 over stdio, NOT Content-Length
   framing. `notifications/initialized` gets no response. A panicking tool must not
@@ -25,6 +32,9 @@ store methods. Logic and tests live in store. If CLI and MCP disagree, that's a 
 - **Revision guards (scratchpads only)**: every mutating scratchpad op takes an
   expected revision; `-1` skips ONLY for append/append-section; enforced in BOTH the
   CLI and MCP adapters. Todos are not revision-guarded; flock is their only ceiling.
+  Cross-machine, these guards soften to advisory — the CRDT subsumes their
+  conflict-prevention job — but the `RevisionMismatch`/`ConcurrentEdit` API contract
+  is preserved.
 - **Deliberate quirks to preserve, not fix**: MCP `todo_update` treats empty string
   as "unchanged"; `LockTodo` allows lock-stealing; save/load_from_file are not
   path-sandboxed; heading parsing is not code-fence aware.
@@ -37,8 +47,11 @@ store methods. Logic and tests live in store. If CLI and MCP disagree, that's a 
 - **tui-markdown** + custom `StyleSheet` (glamour-dark-like) for read mode. syntect
   highlighting is on by default. Known gap: tables pass through as raw pipe-text —
   needs a follow-up pre-pass.
-- **sha1_smol** (store key), **libc** flock (`LOCK_EX`), **serde/serde_json** with
-  `#[serde(rename)]` pinned to the on-disk field names.
+- **automerge 0.11 + autosurgeon 0.13** is the store backend — autosurgeon
+  reconciles/hydrates Rust structs into the per-machine doc. **sha1_smol** (store
+  key), **libc** flock (`LOCK_EX`). **serde/serde_json** now serve legacy-JSON
+  migration parsing and `tally dump` output, with `#[serde(rename)]` still pinned to
+  the legacy on-disk field names the migration reader expects.
 - **ignore** owns plan-path glob matching — the one non-stdlib exception here.
   `plan-paths` lines are reverse-gitignore globs; `src/plans.rs::list` builds an
   `ignore::gitignore::Gitignore` and inverts its verdict per file
@@ -60,13 +73,19 @@ cargo clippy && cargo fmt --check
 `herdr plugin link` does NOT run the manifest `[[build]]` step — build by hand after
 linking. Panes/scripts expect the binary at `bin/tally` exactly.
 
+The store is now a binary automerge blob, not a text file — `cat todos.json` no
+longer works. Inspect it with `tally dump [--json]`.
+
 **Line 2 is not optional.** The rebuild above swaps `bin/tally` to a fresh inode, but
-already-running TUI panes and MCP servers keep executing the OLD image — and a
-whole-file store write from stale code silently drops fields it doesn't know (this is
-how a linked todo's `github` block once vanished). `install.sh` does this on the
-packaged install path; the dev loop has no such hook, so kill stale panes yourself and
-reconnect any MCP session `pgrep` lists (don't `pkill` those — they're stdio children of
-live agent sessions). Panes built after that fix also nag in their own footer.
+already-running TUI panes and MCP servers keep executing the OLD image. This used to
+mean silent data loss (a whole-file write from stale code dropped fields it didn't
+know — how a linked todo's `github` block once vanished); autosurgeon's reconcile
+never prunes unmodeled map keys and preserves `Todo.extra`, so a stale image now
+loads+merges and its snapshot write merges rather than clobbers — that footgun is
+largely defused. The remaining reason to care: you're just running stale code. Kill
+stale panes yourself and reconnect any MCP session `pgrep` lists (don't `pkill`
+those — they're stdio children of live agent sessions). Panes built after that fix
+also nag in their own footer.
 
 **`rm -f` before the `cp` is load-bearing on macOS.** Overwriting the signed
 Mach-O at `bin/tally` in place leaves a stale kernel code-signature cache,
