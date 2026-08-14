@@ -14,6 +14,31 @@ mod todos;
 #[cfg(test)]
 pub(crate) mod testutil;
 
+/// autosurgeon 0.13 has no `#[autosurgeon(skip)]`; `#[autosurgeon(with =
+/// "crate::store::am_skip")]` is the equivalent. `reconcile` is a no-op — it
+/// never touches the prop reconciler, so nothing is written and the field is
+/// left out of the automerge doc; `hydrate` ignores the doc and returns the
+/// field's `Default`, so the never-written key hydrates cleanly instead of
+/// erroring as missing. Used for fields carried outside the derived map:
+/// `Todo.extra` (an untyped `serde_json::Value` map autosurgeon can't model —
+/// and unknown keys survive reconcile anyway, since it never prunes) and
+/// `Scratchpad.content` (written separately as an automerge `Text` child).
+pub(crate) mod am_skip {
+    use autosurgeon::{HydrateError, Prop, ReadDoc, Reconciler};
+
+    pub(crate) fn reconcile<T, R: Reconciler>(_value: &T, _reconciler: R) -> Result<(), R::Error> {
+        Ok(())
+    }
+
+    pub(crate) fn hydrate<T: Default, D: ReadDoc>(
+        _doc: &D,
+        _obj: &automerge::ObjId,
+        _prop: Prop<'_>,
+    ) -> Result<T, HydrateError> {
+        Ok(T::default())
+    }
+}
+
 pub use comments::{Comment, CommentSummary};
 pub use errors::{Error, Result};
 pub use project::{Project, resolve_project, resolve_project_in};

@@ -19,33 +19,50 @@ use super::lock::{atomic_write, with_file_lock};
 use super::project::Project;
 use super::todos::{has_all_tags, now, page};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Scratchpad {
-    #[serde(rename = "id")]
-    pub id: String,
-    #[serde(rename = "title")]
-    pub title: String,
-    #[serde(rename = "tags")]
-    pub tags: Vec<String>,
-    #[serde(rename = "status")]
-    pub status: String,
-    #[serde(rename = "revision")]
-    pub revision: i64,
-    #[serde(rename = "created")]
-    pub created: String,
-    #[serde(rename = "updated")]
-    pub updated: String,
-    /// Attribution: who created / last mutated this. Empty on pads written
-    /// before attribution shipped — never backfilled, so render() omits the
-    /// line when empty (keeps old pads byte-identical on rewrite).
-    #[serde(rename = "created_by", default)]
-    pub created_by: String,
-    #[serde(rename = "updated_by", default)]
-    pub updated_by: String,
-    #[serde(rename = "content")]
-    pub content: String,
+// Scratchpad lives in its own module so the autosurgeon derive expands where
+// `Result` still means `std::result::Result`. autosurgeon-derive 0.13's field
+// wrapper (emitted for the `with =` skip on `content`) writes a bare `Result`
+// in its generated `hydrate_key`, which would otherwise resolve to this file's
+// `super::errors::Result` alias and fail to compile.
+mod scratchpad_def {
+    use serde::{Deserialize, Serialize};
+
+    #[derive(
+        Debug, Clone, Default, Serialize, Deserialize, autosurgeon::Reconcile, autosurgeon::Hydrate,
+    )]
+    #[serde(default)]
+    pub struct Scratchpad {
+        #[serde(rename = "id")]
+        pub id: String,
+        #[serde(rename = "title")]
+        pub title: String,
+        #[serde(rename = "tags")]
+        pub tags: Vec<String>,
+        #[serde(rename = "status")]
+        pub status: String,
+        #[serde(rename = "revision")]
+        pub revision: i64,
+        #[serde(rename = "created")]
+        pub created: String,
+        #[serde(rename = "updated")]
+        pub updated: String,
+        /// Attribution: who created / last mutated this. Empty on pads written
+        /// before attribution shipped — never backfilled, so render() omits the
+        /// line when empty (keeps old pads byte-identical on rewrite).
+        #[serde(rename = "created_by", default)]
+        pub created_by: String,
+        #[serde(rename = "updated_by", default)]
+        pub updated_by: String,
+        // The pad body lives as an automerge Text child written separately by
+        // save_pad (Task 5), not as a scalar on this struct, so the derive must not
+        // reconcile it here; hydrate leaves it empty (the body is carried apart).
+        // 0.13 has no `skip` attribute; `with = am_skip` is the no-op equivalent.
+        #[autosurgeon(with = "crate::store::am_skip")]
+        #[serde(rename = "content")]
+        pub content: String,
+    }
 }
+pub use scratchpad_def::Scratchpad;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -1013,5 +1030,47 @@ mod tests {
         assert_eq!(s.id, "s_x");
         assert!(s.tags.is_empty());
         assert_eq!(s.content, "body");
+    }
+
+    // A fully-populated Scratchpad reconciled into an automerge doc and hydrated
+    // back preserves every modeled field. `content` is skipped by the derive (the
+    // pad body is carried separately as a Text child), so it hydrates back empty.
+    #[test]
+    fn reconcile_roundtrip() {
+        use automerge::AutoCommit;
+        use autosurgeon::{hydrate, reconcile};
+
+        let pad = Scratchpad {
+            id: "s_1".into(),
+            title: "Design notes".into(),
+            tags: vec!["x".into(), "y".into()],
+            status: "active".into(),
+            revision: 3,
+            created: "2026-01-01T00:00:00Z".into(),
+            updated: "2026-01-02T00:00:00Z".into(),
+            created_by: "claude".into(),
+            updated_by: "jason".into(),
+            content: "# Design notes\n\nbody text".into(),
+        };
+
+        let mut doc = AutoCommit::new();
+        reconcile(&mut doc, &pad).unwrap();
+        let back: Scratchpad = hydrate(&doc).unwrap();
+
+        assert_eq!(back.id, pad.id);
+        assert_eq!(back.title, pad.title);
+        assert_eq!(back.tags, pad.tags);
+        assert_eq!(back.status, pad.status);
+        assert_eq!(back.revision, pad.revision);
+        assert_eq!(back.created, pad.created);
+        assert_eq!(back.updated, pad.updated);
+        assert_eq!(back.created_by, pad.created_by);
+        assert_eq!(back.updated_by, pad.updated_by);
+        // `content` is intentionally skipped by the derive (written separately as
+        // an automerge Text child by save_pad), so it round-trips as empty.
+        assert_eq!(
+            back.content, "",
+            "skipped `content` hydrates empty; the body is carried apart"
+        );
     }
 }

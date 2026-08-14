@@ -13,7 +13,9 @@ use super::lock::{atomic_write, with_file_lock};
 use super::project::Project;
 use super::todos::{epoch_from_rfc3339, format_rfc3339, now};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Default, Serialize, Deserialize, autosurgeon::Reconcile, autosurgeon::Hydrate,
+)]
 #[serde(default)]
 pub struct Comment {
     #[serde(rename = "id")]
@@ -43,9 +45,9 @@ pub struct Comment {
 
 // On-disk shape is just {"comments":[…]} — no revision counter: comment ops are
 // explicitly not revision-guarded, so nothing would read it.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, autosurgeon::Reconcile, autosurgeon::Hydrate)]
 #[serde(default)]
-struct CommentsFile {
+pub(crate) struct CommentsFile {
     #[serde(rename = "comments")]
     comments: Vec<Comment>,
 }
@@ -659,5 +661,42 @@ mod tests {
             .find(|x| x.id == local.id)
             .unwrap();
         assert_eq!(found.github_comment_id, 12345);
+    }
+
+    // A fully-populated CommentsFile reconciled into an automerge doc and
+    // hydrated back must preserve every modeled field on the comment.
+    #[test]
+    fn reconcile_roundtrip() {
+        use automerge::AutoCommit;
+        use autosurgeon::{hydrate, reconcile};
+
+        let comment = Comment {
+            id: "c_1".into(),
+            target: "t_1".into(),
+            section: "Phase 1".into(),
+            author: "jason".into(),
+            created: "2026-01-01T00:00:00Z".into(),
+            kind: "note".into(),
+            text: "hold off".into(),
+            github_comment_id: 999,
+        };
+        let file = CommentsFile {
+            comments: vec![comment.clone()],
+        };
+
+        let mut doc = AutoCommit::new();
+        reconcile(&mut doc, &file).unwrap();
+        let back: CommentsFile = hydrate(&doc).unwrap();
+
+        assert_eq!(back.comments.len(), 1);
+        let g = &back.comments[0];
+        assert_eq!(g.id, comment.id);
+        assert_eq!(g.target, comment.target);
+        assert_eq!(g.section, comment.section);
+        assert_eq!(g.author, comment.author);
+        assert_eq!(g.created, comment.created);
+        assert_eq!(g.kind, comment.kind);
+        assert_eq!(g.text, comment.text);
+        assert_eq!(g.github_comment_id, comment.github_comment_id);
     }
 }

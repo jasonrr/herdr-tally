@@ -18,7 +18,9 @@ use super::project::Project;
 
 /// Advisory lock breadcrumb on a todo. lock_todo overwrites unconditionally —
 /// lock-stealing is deliberate (coordination, not a security lock).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Default, Serialize, Deserialize, autosurgeon::Reconcile, autosurgeon::Hydrate,
+)]
 #[serde(default)]
 pub struct Lock {
     #[serde(rename = "owner")]
@@ -30,7 +32,16 @@ pub struct Lock {
 }
 
 /// Opt-in GitHub sync link for a single todo. Absent for unsynced todos.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    autosurgeon::Reconcile,
+    autosurgeon::Hydrate,
+)]
 #[serde(default)]
 pub struct GithubLink {
     #[serde(rename = "repo")]
@@ -45,54 +56,76 @@ pub struct GithubLink {
     pub paused: bool,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Todo {
-    #[serde(rename = "id")]
-    pub id: String,
-    #[serde(rename = "title")]
-    pub title: String,
-    #[serde(rename = "body")]
-    pub body: String,
-    #[serde(rename = "status")]
-    pub status: String,
-    #[serde(rename = "priority")]
-    pub priority: String,
-    #[serde(rename = "tags", deserialize_with = "null_default")]
-    pub tags: Vec<String>,
-    #[serde(rename = "blockers", deserialize_with = "null_default")]
-    pub blockers: Vec<String>,
-    #[serde(rename = "lock")]
-    pub lock: Option<Lock>,
-    #[serde(rename = "created")]
-    pub created: String,
-    #[serde(rename = "updated")]
-    pub updated: String,
-    #[serde(rename = "completed")]
-    pub completed: Option<String>,
-    /// Attribution: who created / last mutated this. Empty on todos written
-    /// before attribution shipped (serde default) — never backfilled.
-    #[serde(rename = "created_by", default)]
-    pub created_by: String,
-    #[serde(rename = "updated_by", default)]
-    pub updated_by: String,
-    /// Opt-in GitHub sync link; None for unsynced todos so existing stores load
-    /// unchanged AND unsynced todos serialize byte-identical to today.
-    #[serde(rename = "github", default, skip_serializing_if = "Option::is_none")]
-    pub github: Option<GithubLink>,
-    /// Catch-all for keys this binary doesn't know. A whole-file rewrite by an
-    /// OLDER tally binary used to silently drop any field it lacked (e.g. `github`
-    /// vanished when a pre-github mcp/tui process edited some other todo), because
-    /// save writes the entire file. Capturing unknowns here round-trips them
-    /// intact. ponytail: only protects fields added AFTER this ships — a binary
-    /// still older than this catch-all can't preserve what it can't hold.
-    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub extra: BTreeMap<String, serde_json::Value>,
-}
+// Todo lives in its own module so the autosurgeon derive expands where `Result`
+// still means `std::result::Result`. autosurgeon-derive 0.13's field wrapper
+// (emitted for the `with =` skip on `extra`) writes a bare `Result` in its
+// generated `hydrate_key`, which would otherwise resolve to this file's
+// `super::errors::Result` alias and fail to compile.
+mod todo_def {
+    use std::collections::BTreeMap;
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+    use serde::{Deserialize, Serialize};
+
+    use super::{GithubLink, Lock, null_default};
+
+    #[derive(
+        Debug, Clone, Default, Serialize, Deserialize, autosurgeon::Reconcile, autosurgeon::Hydrate,
+    )]
+    #[serde(default)]
+    pub struct Todo {
+        #[serde(rename = "id")]
+        pub id: String,
+        #[serde(rename = "title")]
+        pub title: String,
+        #[serde(rename = "body")]
+        pub body: String,
+        #[serde(rename = "status")]
+        pub status: String,
+        #[serde(rename = "priority")]
+        pub priority: String,
+        #[serde(rename = "tags", deserialize_with = "null_default")]
+        pub tags: Vec<String>,
+        #[serde(rename = "blockers", deserialize_with = "null_default")]
+        pub blockers: Vec<String>,
+        #[serde(rename = "lock")]
+        pub lock: Option<Lock>,
+        #[serde(rename = "created")]
+        pub created: String,
+        #[serde(rename = "updated")]
+        pub updated: String,
+        #[serde(rename = "completed")]
+        pub completed: Option<String>,
+        /// Attribution: who created / last mutated this. Empty on todos written
+        /// before attribution shipped (serde default) — never backfilled.
+        #[serde(rename = "created_by", default)]
+        pub created_by: String,
+        #[serde(rename = "updated_by", default)]
+        pub updated_by: String,
+        /// Opt-in GitHub sync link; None for unsynced todos so existing stores load
+        /// unchanged AND unsynced todos serialize byte-identical to today.
+        #[serde(rename = "github", default, skip_serializing_if = "Option::is_none")]
+        pub github: Option<GithubLink>,
+        /// Catch-all for keys this binary doesn't know. A whole-file rewrite by an
+        /// OLDER tally binary used to silently drop any field it lacked (e.g. `github`
+        /// vanished when a pre-github mcp/tui process edited some other todo), because
+        /// save writes the entire file. Capturing unknowns here round-trips them
+        /// intact. ponytail: only protects fields added AFTER this ships — a binary
+        /// still older than this catch-all can't preserve what it can't hold.
+        // autosurgeon can't derive Reconcile/Hydrate for serde_json::Value, and it
+        // doesn't need to: unknown map keys survive reconcile because the derived
+        // Reconcile only writes its own fields and never prunes, so skipping this
+        // field preserves cross-version keys without modeling the untyped map.
+        // 0.13 has no `skip` attribute; `with = am_skip` is the no-op equivalent.
+        #[autosurgeon(with = "crate::store::am_skip")]
+        #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+        pub extra: BTreeMap<String, serde_json::Value>,
+    }
+}
+pub use todo_def::Todo;
+
+#[derive(Debug, Default, Serialize, Deserialize, autosurgeon::Reconcile, autosurgeon::Hydrate)]
 #[serde(default)]
-struct TodosFile {
+pub(crate) struct TodosFile {
     #[serde(rename = "revision")]
     revision: i64,
     #[serde(rename = "todos", deserialize_with = "null_default")]
@@ -1151,5 +1184,119 @@ mod tests {
         let link = p.get_todo(&td.id).unwrap().github.unwrap();
         assert_eq!(link.number, 7, "sync fields still applied");
         assert!(link.paused, "concurrent un-tick must be preserved");
+    }
+
+    // A fully-populated TodosFile reconciled into an automerge doc and hydrated
+    // back must preserve every modeled field. `extra` is skipped by the derive
+    // (carried outside the automerge map), so it hydrates back empty.
+    #[test]
+    fn reconcile_roundtrip() {
+        use automerge::AutoCommit;
+        use autosurgeon::{hydrate, reconcile};
+
+        let todo = Todo {
+            id: "t_1".into(),
+            title: "Title".into(),
+            body: "Body".into(),
+            status: "in_progress".into(),
+            priority: "p1".into(),
+            tags: vec!["a".into(), "b".into()],
+            blockers: vec!["t_0".into()],
+            lock: Some(Lock {
+                owner: "claude".into(),
+                pid: 42,
+                at: "2026-01-01T00:00:00Z".into(),
+            }),
+            created: "2026-01-01T00:00:00Z".into(),
+            updated: "2026-01-02T00:00:00Z".into(),
+            completed: Some("2026-01-03T00:00:00Z".into()),
+            created_by: "claude".into(),
+            updated_by: "jason".into(),
+            github: Some(GithubLink {
+                repo: "owner/name".into(),
+                number: 7,
+                last_pushed: "2026-01-02T00:00:00Z".into(),
+                last_comment_pull: "2026-01-02T00:00:00Z".into(),
+                paused: true,
+            }),
+            extra: BTreeMap::new(),
+        };
+        let file = TodosFile {
+            revision: 5,
+            todos: vec![todo.clone()],
+        };
+
+        let mut doc = AutoCommit::new();
+        reconcile(&mut doc, &file).unwrap();
+        let back: TodosFile = hydrate(&doc).unwrap();
+
+        assert_eq!(back.revision, 5);
+        assert_eq!(back.todos.len(), 1);
+        let g = &back.todos[0];
+        assert_eq!(g.id, todo.id);
+        assert_eq!(g.title, todo.title);
+        assert_eq!(g.body, todo.body);
+        assert_eq!(g.status, todo.status);
+        assert_eq!(g.priority, todo.priority);
+        assert_eq!(g.tags, todo.tags);
+        assert_eq!(g.blockers, todo.blockers);
+        let gl = g.lock.as_ref().expect("lock must round-trip");
+        assert_eq!(gl.owner, "claude");
+        assert_eq!(gl.pid, 42);
+        assert_eq!(gl.at, "2026-01-01T00:00:00Z");
+        assert_eq!(g.created, todo.created);
+        assert_eq!(g.updated, todo.updated);
+        assert_eq!(g.completed, todo.completed);
+        assert_eq!(g.created_by, todo.created_by);
+        assert_eq!(g.updated_by, todo.updated_by);
+        assert_eq!(g.github, todo.github);
+        // `extra` is intentionally skipped by the derive, so it round-trips empty.
+        assert!(
+            g.extra.is_empty(),
+            "skipped `extra` hydrates empty: {:?}",
+            g.extra
+        );
+    }
+
+    // The cross-version preservation invariant: an unmodeled key on a todo's
+    // automerge map survives a this-version hydrate -> mutate -> reconcile ->
+    // save -> reload cycle, because the derived Reconcile never prunes.
+    #[test]
+    fn todo_preserves_unknown_field() {
+        use automerge::transaction::Transactable;
+        use automerge::{AutoCommit, ObjType, ROOT, ReadDoc, Value};
+        use autosurgeon::{hydrate_prop, reconcile_prop};
+
+        let todo = Todo {
+            id: "t_1".into(),
+            title: "orig".into(),
+            ..Default::default()
+        };
+        let mut doc = AutoCommit::new();
+        reconcile_prop(&mut doc, ROOT, "todo", &todo).unwrap();
+
+        // Stamp a key on the todo's map that THIS version's Todo does not model.
+        let (val, obj) = doc.get(ROOT, "todo").unwrap().unwrap();
+        assert!(matches!(val, Value::Object(ObjType::Map)));
+        doc.put(&obj, "future_field", "from_newer_schema").unwrap();
+
+        // A full load -> mutate -> save cycle by this version.
+        let mut back: Todo = hydrate_prop(&doc, ROOT, "todo").unwrap();
+        back.title = "edited".into();
+        reconcile_prop(&mut doc, ROOT, "todo", &back).unwrap();
+        let bytes = doc.save();
+        let reloaded = AutoCommit::load(&bytes).unwrap();
+
+        // The unmodeled key is still present after the round-trip.
+        let (_, obj2) = reloaded.get(ROOT, "todo").unwrap().unwrap();
+        let got = reloaded.get(&obj2, "future_field").unwrap();
+        assert_eq!(
+            got.and_then(|(v, _)| v.to_str().map(str::to_string)),
+            Some("from_newer_schema".to_string()),
+            "unknown key must survive load->mutate->save (reconcile never prunes)"
+        );
+        // And the modeled mutation took effect.
+        let t: Todo = hydrate_prop(&reloaded, ROOT, "todo").unwrap();
+        assert_eq!(t.title, "edited");
     }
 }
