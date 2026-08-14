@@ -13,10 +13,11 @@ fn main() -> ExitCode {
         Some("scratchpads") => cli::scratchpads(&args[1..]),
         Some("comments") => cli::comments(&args[1..]),
         Some("sync") => cli::sync(&args[1..]),
+        Some("dump") => cli::dump(&args[1..]),
         Some("mcp") => mcp::serve_stdio(),
         Some("tui") => tui::run(&args[1..]),
         _ => {
-            eprintln!("usage: tally <todos|scratchpads|comments|sync|mcp|tui> ...");
+            eprintln!("usage: tally <todos|scratchpads|comments|sync|dump|mcp|tui> ...");
             ExitCode::from(2)
         }
     }

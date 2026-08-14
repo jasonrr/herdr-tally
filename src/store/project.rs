@@ -134,10 +134,21 @@ fn git_project_root(dir: &Path) -> Option<PathBuf> {
 }
 
 impl Project {
+    /// The legacy whole-file JSON path. No longer read/written by the todos
+    /// store (that now goes through the automerge doc) — read once by
+    /// `migrate_if_needed` as the pre-automerge source, then kept as a backup.
     pub(crate) fn todos_path(&self) -> PathBuf {
         self.dir.join("todos.json")
     }
 
+    /// The directory holding this project's per-machine automerge snapshots
+    /// (`automerge/<machine_hex>.automerge`), one file per machine.
+    pub(crate) fn am_dir(&self) -> PathBuf {
+        self.dir.join("automerge")
+    }
+
+    /// The legacy whole-file JSON path. No longer read/written by the
+    /// comments store — read once by `migrate_if_needed`, then kept as a backup.
     pub(crate) fn comments_path(&self) -> PathBuf {
         self.dir.join("comments.json")
     }
@@ -150,6 +161,8 @@ impl Project {
         super::sync::parse_repo(&url)
     }
 
+    /// The legacy scratchpad markdown directory. Read once by
+    /// `migrate_if_needed` (each `*.md` parsed into the doc), then kept as backups.
     pub(crate) fn scratch_dir(&self) -> PathBuf {
         self.dir.join("scratchpads")
     }

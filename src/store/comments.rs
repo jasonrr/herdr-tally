@@ -9,13 +9,20 @@ use serde::{Deserialize, Serialize};
 
 use super::errors::{Error, Result};
 use super::ids::new_id;
-use super::lock::{atomic_write, with_file_lock};
 use super::project::Project;
 use super::todos::{epoch_from_rfc3339, format_rfc3339, now};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Default, Serialize, Deserialize, autosurgeon::Reconcile, autosurgeon::Hydrate,
+)]
 #[serde(default)]
 pub struct Comment {
+    // `#[key]` makes autosurgeon's list reconcile diff comments by identity, not
+    // array position — see the matching note on `Todo.id`. The struct-level key
+    // code the derive emits uses fully-qualified `::std::result::Result`, so it
+    // is safe against this file's `super::errors::Result` alias (no inner module
+    // needed).
+    #[key]
     #[serde(rename = "id")]
     pub id: String,
     /// t_… | s_… | plan rel_path. Type is inferred from the prefix by adapters.
@@ -43,11 +50,12 @@ pub struct Comment {
 
 // On-disk shape is just {"comments":[…]} — no revision counter: comment ops are
 // explicitly not revision-guarded, so nothing would read it.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize, autosurgeon::Reconcile, autosurgeon::Hydrate)]
 #[serde(default)]
-struct CommentsFile {
+pub(crate) struct CommentsFile {
+    // pub(crate) so amdoc::dump can read every comment for `tally dump`.
     #[serde(rename = "comments")]
-    comments: Vec<Comment>,
+    pub(crate) comments: Vec<Comment>,
 }
 
 /// One row of the per-target comment view: note count + the most recent
@@ -72,26 +80,15 @@ fn is_zero(n: &i64) -> bool {
 
 impl Project {
     fn load_comments(&self) -> Result<CommentsFile> {
-        let b = match std::fs::read(self.comments_path()) {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(CommentsFile::default());
-            }
-            Err(e) => return Err(e.into()),
-        };
-        Ok(serde_json::from_slice(&b)?)
-    }
-
-    fn save_comments(&self, cf: &CommentsFile) -> Result<()> {
-        let b = serde_json::to_vec_pretty(cf)?;
-        atomic_write(&self.comments_path(), &b)
+        crate::store::amdoc::load_comments_file(&self.load_doc()?)
     }
 
     fn mutate_comments(&self, f: impl FnOnce(&mut CommentsFile) -> Result<()>) -> Result<()> {
-        with_file_lock(&self.comments_path(), || {
-            let mut cf = self.load_comments()?;
+        self.with_doc(|doc| {
+            let mut cf = crate::store::amdoc::load_comments_file(doc)?;
             f(&mut cf)?;
-            self.save_comments(&cf)
+            crate::store::amdoc::save_comments_file(doc, &cf)?;
+            Ok(())
         })
     }
 
@@ -510,7 +507,8 @@ mod tests {
             text: "marked done".into(),
             github_comment_id: 0,
         });
-        tp.save_comments(&cf).unwrap();
+        tp.with_doc(|d| crate::store::amdoc::save_comments_file(d, &cf))
+            .unwrap();
 
         // cutoff excludes the 2000 note, keeps the fresh note; events off by default
         let cutoff = "2020-01-01T00:00:00Z";
@@ -579,7 +577,8 @@ mod tests {
                 github_comment_id: 0,
             });
         }
-        tp.save_comments(&cf).unwrap();
+        tp.with_doc(|d| crate::store::amdoc::save_comments_file(d, &cf))
+            .unwrap();
         // newest-first: the later-appended note wins the tie.
         let r = tp.recent_comments("", None, false).unwrap();
         assert_eq!(r[0].text, "second_appended");
@@ -623,7 +622,8 @@ mod tests {
                 github_comment_id: 0,
             });
         }
-        tp.save_comments(&cf).unwrap();
+        tp.with_doc(|d| crate::store::amdoc::save_comments_file(d, &cf))
+            .unwrap();
         // newest-commented target first: later file index (t_b) wins the tie.
         let sums = tp.comment_summaries().unwrap();
         assert_eq!(sums[0].target, "t_b");
@@ -659,5 +659,42 @@ mod tests {
             .find(|x| x.id == local.id)
             .unwrap();
         assert_eq!(found.github_comment_id, 12345);
+    }
+
+    // A fully-populated CommentsFile reconciled into an automerge doc and
+    // hydrated back must preserve every modeled field on the comment.
+    #[test]
+    fn reconcile_roundtrip() {
+        use automerge::AutoCommit;
+        use autosurgeon::{hydrate, reconcile};
+
+        let comment = Comment {
+            id: "c_1".into(),
+            target: "t_1".into(),
+            section: "Phase 1".into(),
+            author: "jason".into(),
+            created: "2026-01-01T00:00:00Z".into(),
+            kind: "note".into(),
+            text: "hold off".into(),
+            github_comment_id: 999,
+        };
+        let file = CommentsFile {
+            comments: vec![comment.clone()],
+        };
+
+        let mut doc = AutoCommit::new();
+        reconcile(&mut doc, &file).unwrap();
+        let back: CommentsFile = hydrate(&doc).unwrap();
+
+        assert_eq!(back.comments.len(), 1);
+        let g = &back.comments[0];
+        assert_eq!(g.id, comment.id);
+        assert_eq!(g.target, comment.target);
+        assert_eq!(g.section, comment.section);
+        assert_eq!(g.author, comment.author);
+        assert_eq!(g.created, comment.created);
+        assert_eq!(g.kind, comment.kind);
+        assert_eq!(g.text, comment.text);
+        assert_eq!(g.github_comment_id, comment.github_comment_id);
     }
 }

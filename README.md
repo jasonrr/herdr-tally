@@ -72,6 +72,36 @@ comments; plans are read straight from disk. Data lives under
 `~/.local/state/tally/`, keyed by project path — worktrees of the same repo share
 one store.
 
+## Cross-machine sync (optional)
+
+The store follows you across machines if you put its directory in any synced
+folder — iCloud Drive, Dropbox, Syncthing, whatever you already use. This is
+entirely optional: tally works fully local with zero sync, and it neither
+detects nor manages a sync folder for you.
+
+One-time setup, move the store and symlink it back:
+
+```bash
+mv ~/.local/state/tally "$ICLOUD/tally"
+ln -s "$ICLOUD/tally" ~/.local/state/tally
+```
+
+(`~/.local/state/tally` is the default store root — `$XDG_STATE_HOME/tally` if
+you have that set.)
+
+Two things to know before you rely on it:
+
+- The store key hashes the project's **absolute path**, so every machine needs
+  the project checked out at the same absolute path — otherwise the sha1 store
+  key differs per machine and they won't share a store.
+- iCloud can evict an idle folder to a `.icloud` placeholder; pin it to "keep
+  downloaded", or use Syncthing/Dropbox, which don't evict.
+
+It's safe to sync live: each machine writes only its own
+`automerge/<machine-hex>.automerge` snapshot, and loading merges every
+machine's file losslessly (it's a CRDT), so concurrent edits from different
+machines union rather than clobber.
+
 ## Install
 
 ```bash

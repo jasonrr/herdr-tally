@@ -13,12 +13,13 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use super::errors::{Error, Result};
 use super::ids::new_id;
-use super::lock::{atomic_write, with_file_lock};
 use super::project::Project;
 
 /// Advisory lock breadcrumb on a todo. lock_todo overwrites unconditionally —
 /// lock-stealing is deliberate (coordination, not a security lock).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Default, Serialize, Deserialize, autosurgeon::Reconcile, autosurgeon::Hydrate,
+)]
 #[serde(default)]
 pub struct Lock {
     #[serde(rename = "owner")]
@@ -30,7 +31,16 @@ pub struct Lock {
 }
 
 /// Opt-in GitHub sync link for a single todo. Absent for unsynced todos.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    autosurgeon::Reconcile,
+    autosurgeon::Hydrate,
+)]
 #[serde(default)]
 pub struct GithubLink {
     #[serde(rename = "repo")]
@@ -45,58 +55,90 @@ pub struct GithubLink {
     pub paused: bool,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Todo {
-    #[serde(rename = "id")]
-    pub id: String,
-    #[serde(rename = "title")]
-    pub title: String,
-    #[serde(rename = "body")]
-    pub body: String,
-    #[serde(rename = "status")]
-    pub status: String,
-    #[serde(rename = "priority")]
-    pub priority: String,
-    #[serde(rename = "tags", deserialize_with = "null_default")]
-    pub tags: Vec<String>,
-    #[serde(rename = "blockers", deserialize_with = "null_default")]
-    pub blockers: Vec<String>,
-    #[serde(rename = "lock")]
-    pub lock: Option<Lock>,
-    #[serde(rename = "created")]
-    pub created: String,
-    #[serde(rename = "updated")]
-    pub updated: String,
-    #[serde(rename = "completed")]
-    pub completed: Option<String>,
-    /// Attribution: who created / last mutated this. Empty on todos written
-    /// before attribution shipped (serde default) — never backfilled.
-    #[serde(rename = "created_by", default)]
-    pub created_by: String,
-    #[serde(rename = "updated_by", default)]
-    pub updated_by: String,
-    /// Opt-in GitHub sync link; None for unsynced todos so existing stores load
-    /// unchanged AND unsynced todos serialize byte-identical to today.
-    #[serde(rename = "github", default, skip_serializing_if = "Option::is_none")]
-    pub github: Option<GithubLink>,
-    /// Catch-all for keys this binary doesn't know. A whole-file rewrite by an
-    /// OLDER tally binary used to silently drop any field it lacked (e.g. `github`
-    /// vanished when a pre-github mcp/tui process edited some other todo), because
-    /// save writes the entire file. Capturing unknowns here round-trips them
-    /// intact. ponytail: only protects fields added AFTER this ships — a binary
-    /// still older than this catch-all can't preserve what it can't hold.
-    #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub extra: BTreeMap<String, serde_json::Value>,
-}
+// Todo lives in its own module so the autosurgeon derive expands where `Result`
+// still means `std::result::Result`. autosurgeon-derive 0.13's field wrapper
+// (emitted for the `with =` skip on `extra`) writes a bare `Result` in its
+// generated `hydrate_key`, which would otherwise resolve to this file's
+// `super::errors::Result` alias and fail to compile.
+mod todo_def {
+    use std::collections::BTreeMap;
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+    use serde::{Deserialize, Serialize};
+
+    use super::{GithubLink, Lock, null_default};
+
+    #[derive(
+        Debug, Clone, Default, Serialize, Deserialize, autosurgeon::Reconcile, autosurgeon::Hydrate,
+    )]
+    #[serde(default)]
+    pub struct Todo {
+        // `#[key]` makes autosurgeon's list reconcile diff todos by identity, not
+        // array position. Without it, deleting a non-tail todo makes autosurgeon
+        // reuse the removed element's automerge object for its successor —
+        // overwriting fields and mis-attributing any doc-resident unmodeled key
+        // (the exact cross-version data `extra` exists to protect), and churning
+        // CRDT object identity so cross-machine merges diverge.
+        #[key]
+        #[serde(rename = "id")]
+        pub id: String,
+        #[serde(rename = "title")]
+        pub title: String,
+        #[serde(rename = "body")]
+        pub body: String,
+        #[serde(rename = "status")]
+        pub status: String,
+        #[serde(rename = "priority")]
+        pub priority: String,
+        #[serde(rename = "tags", deserialize_with = "null_default")]
+        pub tags: Vec<String>,
+        #[serde(rename = "blockers", deserialize_with = "null_default")]
+        pub blockers: Vec<String>,
+        #[serde(rename = "lock")]
+        pub lock: Option<Lock>,
+        #[serde(rename = "created")]
+        pub created: String,
+        #[serde(rename = "updated")]
+        pub updated: String,
+        #[serde(rename = "completed")]
+        pub completed: Option<String>,
+        /// Attribution: who created / last mutated this. Empty on todos written
+        /// before attribution shipped (serde default) — never backfilled.
+        #[serde(rename = "created_by", default)]
+        pub created_by: String,
+        #[serde(rename = "updated_by", default)]
+        pub updated_by: String,
+        /// Opt-in GitHub sync link; None for unsynced todos so existing stores load
+        /// unchanged AND unsynced todos serialize byte-identical to today.
+        #[serde(rename = "github", default, skip_serializing_if = "Option::is_none")]
+        pub github: Option<GithubLink>,
+        /// Catch-all for keys this binary doesn't know. A whole-file rewrite by an
+        /// OLDER tally binary used to silently drop any field it lacked (e.g. `github`
+        /// vanished when a pre-github mcp/tui process edited some other todo), because
+        /// save writes the entire file. Capturing unknowns here round-trips them
+        /// intact. ponytail: only protects fields added AFTER this ships — a binary
+        /// still older than this catch-all can't preserve what it can't hold.
+        // autosurgeon can't derive Reconcile/Hydrate for serde_json::Value, and it
+        // doesn't need to: unknown map keys survive reconcile because the derived
+        // Reconcile only writes its own fields and never prunes, so skipping this
+        // field preserves cross-version keys without modeling the untyped map.
+        // 0.13 has no `skip` attribute; `with = am_skip` is the no-op equivalent.
+        #[autosurgeon(with = "crate::store::am_skip")]
+        #[serde(flatten, default, skip_serializing_if = "BTreeMap::is_empty")]
+        pub extra: BTreeMap<String, serde_json::Value>,
+    }
+}
+pub use todo_def::Todo;
+
+#[derive(Debug, Default, Serialize, Deserialize, autosurgeon::Reconcile, autosurgeon::Hydrate)]
 #[serde(default)]
-struct TodosFile {
+pub(crate) struct TodosFile {
+    // pub(crate) so amdoc::dump can read the store revision for `tally dump`.
     #[serde(rename = "revision")]
-    revision: i64,
+    pub(crate) revision: i64,
+    // pub(crate) so the migration (amdoc.rs) can normalize priorities and walk
+    // `extra` after deserializing a legacy todos.json.
     #[serde(rename = "todos", deserialize_with = "null_default")]
-    todos: Vec<Todo>,
+    pub(crate) todos: Vec<Todo>,
 }
 
 /// Go's json.Unmarshal turns JSON null into a nil slice, which the store then
@@ -213,30 +255,22 @@ impl TodosFile {
 
 impl Project {
     fn load_todos(&self) -> Result<TodosFile> {
-        let b = match std::fs::read(self.todos_path()) {
-            Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(TodosFile::default()),
-            Err(e) => return Err(e.into()),
-        };
-        let mut tf: TodosFile = serde_json::from_slice(&b)?;
+        let doc = self.load_doc()?;
+        let mut tf = crate::store::amdoc::load_todos_file(&doc)?;
         for t in &mut tf.todos {
             t.priority = migrate_legacy_priority(&t.priority);
         }
         Ok(tf)
     }
 
-    fn save_todos(&self, tf: &mut TodosFile) -> Result<()> {
-        tf.revision += 1;
-        let b = serde_json::to_vec_pretty(tf)?;
-        atomic_write(&self.todos_path(), &b)
-    }
-
-    /// Loads, applies f, saves — all under the file lock.
+    /// Loads, applies f, saves — all under the doc's flock.
     fn mutate_todos(&self, f: impl FnOnce(&mut TodosFile) -> Result<()>) -> Result<()> {
-        with_file_lock(&self.todos_path(), || {
-            let mut tf = self.load_todos()?;
+        self.with_doc(|doc| {
+            let mut tf = crate::store::amdoc::load_todos_file(doc)?;
             f(&mut tf)?;
-            self.save_todos(&mut tf)
+            tf.revision += 1;
+            crate::store::amdoc::save_todos_file(doc, &tf)?;
+            Ok(())
         })
     }
 
@@ -588,7 +622,9 @@ fn normalize_priority(raw: &str) -> Result<String> {
 /// ponytail: one-shot legacy upgrade — old H/M/L stores map to the P0–P3 scale
 /// at load, so they self-heal on the next save. Delete once no legacy values
 /// remain on disk. Fresh writes go through normalize_priority (P0–P3 only).
-fn migrate_legacy_priority(p: &str) -> String {
+/// pub(crate) so the one-time migration (amdoc.rs) normalizes on the way into
+/// the doc, not just on read.
+pub(crate) fn migrate_legacy_priority(p: &str) -> String {
     match p {
         "high" => "p1",
         "medium" => "p2",
@@ -916,65 +952,26 @@ mod tests {
         .expect("None guard must never fail");
     }
 
-    // Migration guard: a todos.json exactly as the Go binary marshals it
-    // (MarshalIndent, no omitempty, explicit nulls) must round-trip through
-    // the Rust store.
+    // Legacy H/M/L priority self-heal, now exercised against the doc directly
+    // (load_todos reads the automerge doc, not todos.json — legacy-JSON read
+    // coverage lives in Task 6's migration test).
     #[test]
-    fn test_reads_go_written_todos_json() {
+    fn load_migrates_legacy_priority_from_doc() {
         let p = new_project();
-        let fixture = r#"{
-  "revision": 3,
-  "todos": [
-    {
-      "id": "t_go1",
-      "title": "From Go",
-      "body": "left by the Go binary",
-      "status": "open",
-      "priority": "medium",
-      "tags": ["a", "b"],
-      "blockers": [],
-      "lock": null,
-      "created": "2026-01-02T03:04:05Z",
-      "updated": "2026-01-02T03:04:05Z",
-      "completed": null
-    },
-    {
-      "id": "t_go2",
-      "title": "Locked done",
-      "body": "",
-      "status": "completed",
-      "priority": "high",
-      "tags": [],
-      "blockers": ["t_go1"],
-      "lock": {
-        "owner": "claude",
-        "pid": 42,
-        "at": "2026-01-02T03:04:06Z"
-      },
-      "created": "2026-01-02T03:04:05Z",
-      "updated": "2026-01-02T03:04:07Z",
-      "completed": "2026-01-02T03:04:07Z"
-    }
-  ]
-}"#;
-        std::fs::write(p.todos_path(), fixture).unwrap();
-        let t1 = p.get_todo("t_go1").unwrap();
-        assert_eq!(t1.tags, vec!["a", "b"]);
-        assert!(t1.lock.is_none());
-        // Legacy H/M/L on disk is upgraded to the P0–P3 scale at load.
-        assert_eq!(t1.priority, "p2"); // medium -> p2
-        let t2 = p.get_todo("t_go2").unwrap();
-        assert_eq!(t2.priority, "p1"); // high -> p1
-        assert_eq!(t2.lock.as_ref().map(|l| l.owner.as_str()), Some("claude"));
-        assert_eq!(t2.completed.as_deref(), Some("2026-01-02T03:04:07Z"));
-        assert_eq!(t2.blockers, vec!["t_go1"]);
-        // Attribution fields absent in the Go file default to empty (not backfilled).
-        assert_eq!(t1.created_by, "");
-        assert_eq!(t1.updated_by, "");
-        // And a Rust-side mutation on top of the Go file must not lose data.
-        let up = p.add_todo_tag("t_go2", "ported").unwrap();
-        assert!(up.tags.contains(&"ported".to_string()));
-        assert!(p.get_todo("t_go1").is_ok());
+        p.with_doc(|d| {
+            let tf = TodosFile {
+                revision: 0,
+                todos: vec![Todo {
+                    id: "t_legacy".into(),
+                    priority: "high".into(),
+                    ..Default::default()
+                }],
+            };
+            crate::store::amdoc::save_todos_file(d, &tf)
+        })
+        .unwrap();
+        let t = p.get_todo("t_legacy").unwrap();
+        assert_eq!(t.priority, "p1"); // high -> p1
     }
 
     #[test]
@@ -1151,5 +1148,182 @@ mod tests {
         let link = p.get_todo(&td.id).unwrap().github.unwrap();
         assert_eq!(link.number, 7, "sync fields still applied");
         assert!(link.paused, "concurrent un-tick must be preserved");
+    }
+
+    // A fully-populated TodosFile reconciled into an automerge doc and hydrated
+    // back must preserve every modeled field. `extra` is skipped by the derive
+    // (carried outside the automerge map), so it hydrates back empty.
+    #[test]
+    fn reconcile_roundtrip() {
+        use automerge::AutoCommit;
+        use autosurgeon::{hydrate, reconcile};
+
+        let todo = Todo {
+            id: "t_1".into(),
+            title: "Title".into(),
+            body: "Body".into(),
+            status: "in_progress".into(),
+            priority: "p1".into(),
+            tags: vec!["a".into(), "b".into()],
+            blockers: vec!["t_0".into()],
+            lock: Some(Lock {
+                owner: "claude".into(),
+                pid: 42,
+                at: "2026-01-01T00:00:00Z".into(),
+            }),
+            created: "2026-01-01T00:00:00Z".into(),
+            updated: "2026-01-02T00:00:00Z".into(),
+            completed: Some("2026-01-03T00:00:00Z".into()),
+            created_by: "claude".into(),
+            updated_by: "jason".into(),
+            github: Some(GithubLink {
+                repo: "owner/name".into(),
+                number: 7,
+                last_pushed: "2026-01-02T00:00:00Z".into(),
+                last_comment_pull: "2026-01-02T00:00:00Z".into(),
+                paused: true,
+            }),
+            extra: BTreeMap::new(),
+        };
+        let file = TodosFile {
+            revision: 5,
+            todos: vec![todo.clone()],
+        };
+
+        let mut doc = AutoCommit::new();
+        reconcile(&mut doc, &file).unwrap();
+        let back: TodosFile = hydrate(&doc).unwrap();
+
+        assert_eq!(back.revision, 5);
+        assert_eq!(back.todos.len(), 1);
+        let g = &back.todos[0];
+        assert_eq!(g.id, todo.id);
+        assert_eq!(g.title, todo.title);
+        assert_eq!(g.body, todo.body);
+        assert_eq!(g.status, todo.status);
+        assert_eq!(g.priority, todo.priority);
+        assert_eq!(g.tags, todo.tags);
+        assert_eq!(g.blockers, todo.blockers);
+        let gl = g.lock.as_ref().expect("lock must round-trip");
+        assert_eq!(gl.owner, "claude");
+        assert_eq!(gl.pid, 42);
+        assert_eq!(gl.at, "2026-01-01T00:00:00Z");
+        assert_eq!(g.created, todo.created);
+        assert_eq!(g.updated, todo.updated);
+        assert_eq!(g.completed, todo.completed);
+        assert_eq!(g.created_by, todo.created_by);
+        assert_eq!(g.updated_by, todo.updated_by);
+        assert_eq!(g.github, todo.github);
+        // `extra` is intentionally skipped by the derive, so it round-trips empty.
+        assert!(
+            g.extra.is_empty(),
+            "skipped `extra` hydrates empty: {:?}",
+            g.extra
+        );
+    }
+
+    // The cross-version preservation invariant: an unmodeled key on a todo's
+    // automerge map survives a this-version hydrate -> mutate -> reconcile ->
+    // save -> reload cycle, because the derived Reconcile never prunes.
+    #[test]
+    fn todo_preserves_unknown_field() {
+        use automerge::transaction::Transactable;
+        use automerge::{AutoCommit, ObjType, ROOT, ReadDoc, Value};
+        use autosurgeon::{hydrate_prop, reconcile_prop};
+
+        let todo = Todo {
+            id: "t_1".into(),
+            title: "orig".into(),
+            ..Default::default()
+        };
+        let mut doc = AutoCommit::new();
+        reconcile_prop(&mut doc, ROOT, "todo", &todo).unwrap();
+
+        // Stamp a key on the todo's map that THIS version's Todo does not model.
+        let (val, obj) = doc.get(ROOT, "todo").unwrap().unwrap();
+        assert!(matches!(val, Value::Object(ObjType::Map)));
+        doc.put(&obj, "future_field", "from_newer_schema").unwrap();
+
+        // A full load -> mutate -> save cycle by this version.
+        let mut back: Todo = hydrate_prop(&doc, ROOT, "todo").unwrap();
+        back.title = "edited".into();
+        reconcile_prop(&mut doc, ROOT, "todo", &back).unwrap();
+        let bytes = doc.save();
+        let reloaded = AutoCommit::load(&bytes).unwrap();
+
+        // The unmodeled key is still present after the round-trip.
+        let (_, obj2) = reloaded.get(ROOT, "todo").unwrap().unwrap();
+        let got = reloaded.get(&obj2, "future_field").unwrap();
+        assert_eq!(
+            got.and_then(|(v, _)| v.to_str().map(str::to_string)),
+            Some("from_newer_schema".to_string()),
+            "unknown key must survive load->mutate->save (reconcile never prunes)"
+        );
+        // And the modeled mutation took effect.
+        let t: Todo = hydrate_prop(&reloaded, ROOT, "todo").unwrap();
+        assert_eq!(t.title, "edited");
+    }
+
+    // Regression guard for identity-based list reconcile (`#[key]` on Todo.id):
+    // deleting a non-tail todo must not migrate a sibling's doc-resident unknown
+    // key onto a different todo. With positional diffing this fails — t_a's slot
+    // (position 0) would be reused for t_b, mis-attributing t_b's key.
+    #[test]
+    fn reconcile_by_id_preserves_sibling_unknown_key_on_delete() {
+        use automerge::transaction::Transactable;
+        use automerge::{AutoCommit, ObjType, ROOT, ReadDoc, Value};
+        use autosurgeon::reconcile_prop;
+
+        let mk = |id: &str| Todo {
+            id: id.into(),
+            title: id.into(),
+            ..Default::default()
+        };
+
+        // Reconcile the todo LIST directly at "todos" (this is the list-element
+        // diff under test, not the enclosing TodosFile map).
+        let mut doc = AutoCommit::new();
+        let todos = vec![mk("t_a"), mk("t_b"), mk("t_c")];
+        reconcile_prop(&mut doc, ROOT, "todos", &todos).unwrap();
+
+        // Walk the `todos` list, returning the map object holding `want`'s id.
+        let find_obj = |doc: &AutoCommit, want: &str| {
+            let (_, list) = doc.get(ROOT, "todos").unwrap().unwrap();
+            for i in 0..doc.length(&list) {
+                let (v, elem) = doc.get(&list, i).unwrap().unwrap();
+                assert!(matches!(v, Value::Object(ObjType::Map)));
+                let (idv, _) = doc.get(&elem, "id").unwrap().unwrap();
+                if idv.to_str() == Some(want) {
+                    return Some(elem);
+                }
+            }
+            None
+        };
+
+        // A newer machine stamped an unmodeled key on t_b's object.
+        let b_obj = find_obj(&doc, "t_b").expect("t_b present");
+        doc.put(&b_obj, "future_field", "keep").unwrap();
+
+        // Delete the HEAD todo (t_a) and reconcile the remaining [t_b, t_c].
+        let remaining = vec![mk("t_b"), mk("t_c")];
+        reconcile_prop(&mut doc, ROOT, "todos", &remaining).unwrap();
+
+        // t_b's object still carries its unmodeled key (matched by identity).
+        let b_obj2 = find_obj(&doc, "t_b").expect("t_b still present");
+        let got = doc.get(&b_obj2, "future_field").unwrap();
+        assert_eq!(
+            got.and_then(|(v, _)| v.to_str().map(str::to_string)),
+            Some("keep".to_string()),
+            "t_b's unmodeled key must follow t_b by identity across a non-tail delete"
+        );
+
+        // The key did not leak onto any sibling (positional diff would leak it).
+        let c_obj = find_obj(&doc, "t_c").expect("t_c present");
+        assert!(
+            doc.get(&c_obj, "future_field").unwrap().is_none(),
+            "future_field must not leak onto a sibling todo"
+        );
+        let (_, list) = doc.get(ROOT, "todos").unwrap().unwrap();
+        assert_eq!(doc.length(&list), 2, "list should be exactly [t_b, t_c]");
     }
 }
