@@ -29,6 +29,11 @@ current=$(grep -E '^version *= *"' Cargo.toml | head -n 1 | sed -E 's/^version *
 NEXT=$next perl -0pi -e 's/(\[package\]\nname = "tally"\nversion = ")[^"]+/${1}$ENV{NEXT}/' Cargo.toml
 NEXT=$next perl -0pi -e 's/(^version = ")[^"]+/${1}$ENV{NEXT}/m' herdr-plugin.toml
 NEXT=$next perl -0pi -e 's/(name = "tally"\nversion = ")[^"]+/${1}$ENV{NEXT}/' Cargo.lock
+# The Claude Code plugin surface reads these two — `claude plugin update` keys off
+# .claude-plugin/plugin.json, so if it doesn't advance, installed plugins never
+# refresh. Force both to $next (they had drifted behind the Cargo/herdr versions).
+NEXT=$next perl -0pi -e 's/("version": ")[^"]+/${1}$ENV{NEXT}/' .claude-plugin/plugin.json
+NEXT=$next perl -0pi -e 's/("version": ")[^"]+/${1}$ENV{NEXT}/' package.json
 
 cargo build --release
 mkdir -p bin
