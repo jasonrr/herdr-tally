@@ -11,6 +11,8 @@ Input: the `plan:<slug>` scratchpad **id** (from your dispatch brief) and its `p
 
 **First, materialize the plan.** Write the `plan:<slug>` scratchpad to `docs/plans/YYYY-MM-DD-<slug>.md` (the scratchpad's creation date, the branch slug) and commit it with an explicit path — it rides the feature's PR to main and shows in the Plans tab on merge. In-flight it stayed a scratchpad because a `docs/plans` file in a worktree is invisible to the Plans tab until merged.
 
+**Then seed the dev-loop config.** `.claude/tally-dev-loop.md` (routing + review lenses) is gitignored, so a fresh worktree checkout lacks it and the per-task review below would silently fall back to default lenses. If it's absent here but present in the main worktree, copy it in — a no-op when it already exists or the repo has no dev loop: `[ -f .claude/tally-dev-loop.md ] || { root="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"; [ -f "$root/.claude/tally-dev-loop.md" ] && mkdir -p .claude && cp "$root/.claude/tally-dev-loop.md" .claude/tally-dev-loop.md; }` (the copy stays gitignored — it never enters the PR).
+
 ## Per task, in blocker order, one at a time
 
 1. **Cut check.** Reread the task's "Exists because" line against the code as it stands now. If it no longer holds, or a dumber path has appeared since planning, surface that to the user instead of building — plans go stale as earlier tasks land, and a wasted task costs its full implement+review cycle.

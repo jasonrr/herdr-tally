@@ -7,6 +7,8 @@ description: Whole-branch adversarial review before merge — runs against the o
 
 One deep pass over `merge-base..HEAD` — the open PR's diff, sized to it. A false finding costs one fix dispatch; a missed p1 ships a bug — calibrate to that asymmetry, not away from it.
 
+**Seed the dev-loop config first.** The lens charters and p1 checklist below live in `.claude/tally-dev-loop.md`, which is gitignored and so absent from a fresh worktree checkout — without it this review silently runs default lenses instead of the repo's. If it's missing here but present in the main worktree, copy it in before dispatching reviewers (a no-op when already present or the repo has no dev loop): `[ -f .claude/tally-dev-loop.md ] || { root="$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")"; [ -f "$root/.claude/tally-dev-loop.md" ] && mkdir -p .claude && cp "$root/.claude/tally-dev-loop.md" .claude/tally-dev-loop.md; }` (stays gitignored — never enters the PR).
+
 ## Severity — definitions, not vibes
 
 - **p1 (blocks merge):** data loss or orphaned data, violation of a documented invariant, security (auth, injection, secrets exposure), user-visible breakage on a mainline path.
