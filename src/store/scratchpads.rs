@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 
 use super::errors::{Error, Result};
 use super::ids::new_id;
-use super::lock::{atomic_write, with_file_lock};
 use super::project::Project;
 use super::todos::{has_all_tags, now, page};
 
@@ -92,7 +91,8 @@ pub struct Match {
 /// markdown body. ponytail: hand-rolled parser for a fixed 7-field header,
 /// avoids a YAML dependency; widen only if the header schema grows. Unlike the
 /// Go version this can't fail (Go's error return was always nil).
-fn parse_pad(b: &[u8]) -> Scratchpad {
+#[allow(dead_code)] // used by Task 6 migration (parses legacy scratchpads/*.md)
+pub(crate) fn parse_pad(b: &[u8]) -> Scratchpad {
     let text = String::from_utf8_lossy(b);
     let mut s = Scratchpad {
         status: "active".to_string(),
@@ -141,6 +141,10 @@ fn parse_tag_list(v: &str) -> Vec<String> {
 }
 
 impl Scratchpad {
+    // Legacy `---` frontmatter renderer. The store no longer writes `.md`
+    // files (pads live in the automerge doc), so this only round-trips the
+    // legacy-format parser tests; kept test-only, not in the shipped binary.
+    #[cfg(test)]
     fn render(&self) -> String {
         // created_by/updated_by are omitted when empty so a pad written before
         // attribution round-trips byte-for-byte (see the Go migration test).
@@ -257,17 +261,8 @@ fn first_line(s: &str) -> &str {
 }
 
 impl Project {
-    /// The on-disk path of a scratchpad, for external editors (TUI `$EDITOR`).
-    pub fn pad_path(&self, id: &str) -> PathBuf {
-        self.scratch_dir().join(format!("{id}.md"))
-    }
-
     pub(crate) fn read_pad(&self, id: &str) -> Result<Scratchpad> {
-        match std::fs::read(self.pad_path(id)) {
-            Ok(b) => Ok(parse_pad(&b)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(Error::NotFound),
-            Err(e) => Err(e.into()),
-        }
+        crate::store::amdoc::load_pad(&self.load_doc()?, id)?.ok_or(Error::NotFound)
     }
 
     /// Loads, checks revision (exp_rev < 0 skips), applies f, bumps revision, saves.
@@ -277,9 +272,8 @@ impl Project {
         exp_rev: i64,
         f: impl FnOnce(&mut Scratchpad) -> Result<()>,
     ) -> Result<Scratchpad> {
-        let path = self.pad_path(id);
-        with_file_lock(&path, || {
-            let mut s = self.read_pad(id)?;
+        self.with_doc(|doc| {
+            let mut s = crate::store::amdoc::load_pad(doc, id)?.ok_or(Error::NotFound)?;
             if exp_rev >= 0 && s.revision != exp_rev {
                 return Err(Error::RevisionMismatch);
             }
@@ -287,7 +281,7 @@ impl Project {
             s.revision += 1;
             s.updated = now();
             s.updated_by = self.actor.clone();
-            atomic_write(&path, s.render().as_bytes())?;
+            crate::store::amdoc::save_pad(doc, &s)?;
             Ok(s)
         })
     }
@@ -315,8 +309,7 @@ impl Project {
             updated_by: self.actor.clone(),
             content: content.to_string(),
         };
-        let path = self.pad_path(&s.id);
-        with_file_lock(&path, || atomic_write(&path, s.render().as_bytes()))?;
+        self.with_doc(|doc| crate::store::amdoc::save_pad(doc, &s))?;
         Ok(s)
     }
 
@@ -351,18 +344,14 @@ impl Project {
         offset: i64,
         limit: i64,
     ) -> Result<Vec<Scratchpad>> {
-        // Go's os.ReadDir returns name-sorted entries; sort to match so paging
-        // over equal Updated stamps stays deterministic.
-        let mut names: Vec<String> = std::fs::read_dir(self.scratch_dir())?
-            .filter_map(|e| e.ok())
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| n.ends_with(".md"))
-            .collect();
-        names.sort();
+        // Sort ids so paging over equal Updated stamps stays deterministic
+        // (Go sorted by filename; the final sort-by-updated below is unchanged).
+        let doc = self.load_doc()?;
+        let mut ids = crate::store::amdoc::pad_ids(&doc)?;
+        ids.sort();
         let mut out = Vec::new();
-        for name in &names {
-            let id = name.strip_suffix(".md").unwrap_or(name);
-            let Ok(mut s) = self.read_pad(id) else {
+        for id in &ids {
+            let Some(mut s) = crate::store::amdoc::load_pad(&doc, id)? else {
                 continue;
             };
             if s.status == "archived" && !include_archived {
@@ -459,13 +448,12 @@ impl Project {
     }
 
     pub fn delete_scratchpad(&self, id: &str, exp_rev: i64) -> Result<()> {
-        let path = self.pad_path(id);
-        with_file_lock(&path, || {
-            let s = self.read_pad(id)?;
+        self.with_doc(|doc| {
+            let s = crate::store::amdoc::load_pad(doc, id)?.ok_or(Error::NotFound)?;
             if exp_rev >= 0 && s.revision != exp_rev {
                 return Err(Error::RevisionMismatch);
             }
-            std::fs::remove_file(&path)?;
+            crate::store::amdoc::remove_pad(doc, id)?;
             Ok(())
         })?;
         self.delete_comments_for_target(id)
@@ -675,8 +663,8 @@ impl Project {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::Error;
     use crate::store::testutil::{TempDir, new_project};
-    use crate::store::{Error, resolve_project_in};
 
     #[test]
     fn parse_headings_uses_store_grammar() {
@@ -955,15 +943,6 @@ mod tests {
         assert!(loaded.content.contains("body"));
     }
 
-    #[test]
-    fn test_pad_path_matches_file() {
-        let root = TempDir::new();
-        let dir = TempDir::new(); // non-git dir, like the Go test's bare t.TempDir()
-        let p = resolve_project_in(root.path(), Some(&dir.path().to_string_lossy())).unwrap();
-        let s = p.create_scratchpad("x", "hi", Vec::new()).unwrap();
-        assert!(p.pad_path(&s.id).exists(), "pad_path not on disk");
-    }
-
     // Migration guard: a pad byte-for-byte as the Go render() wrote it must
     // parse to the same fields, and the Rust render() must reproduce it.
     #[test]
@@ -1071,6 +1050,48 @@ mod tests {
         assert_eq!(
             back.content, "",
             "skipped `content` hydrates empty; the body is carried apart"
+        );
+    }
+
+    // The pad body is a real char-mergeable CRDT `Text` child, not a clobbering
+    // scalar: two machines editing the SAME pad's body concurrently both keep
+    // their edits after a merge. Proven on a pad created via the real
+    // create_scratchpad path (so it exercises save_pad's Text child).
+    #[test]
+    fn pad_body_merges() {
+        use automerge::transaction::Transactable;
+        use automerge::{ActorId, AutoCommit, ROOT, ReadDoc};
+
+        let p = new_project();
+        let pad = p.create_scratchpad("t", "hello", vec![]).unwrap();
+
+        // Two docs from the same on-disk state, each under its own actor so the
+        // edits are genuinely concurrent (same actor would serialize them).
+        let mut a = p.load_doc().unwrap();
+        a.set_actor(ActorId::from([1u8; 16]));
+        let mut b = p.load_doc().unwrap();
+        b.set_actor(ActorId::from([2u8; 16]));
+
+        // Locate this pad's `content` Text child in a given doc.
+        let text_id = |doc: &AutoCommit| -> automerge::ObjId {
+            let (_, sp) = doc.get(ROOT, "scratchpads").unwrap().unwrap();
+            let (_, pad_map) = doc.get(&sp, pad.id.as_str()).unwrap().unwrap();
+            let (_, t) = doc.get(&pad_map, "content").unwrap().unwrap();
+            t
+        };
+        let ta = text_id(&a);
+        let tb = text_id(&b);
+
+        // Non-overlapping concurrent edits: A appends, B prepends.
+        a.update_text(&ta, "hello AAA").unwrap();
+        b.update_text(&tb, "BBB hello").unwrap();
+
+        a.merge(&mut b).unwrap();
+
+        let merged = a.text(&ta).unwrap();
+        assert!(
+            merged.contains("AAA") && merged.contains("BBB"),
+            "both concurrent body edits must survive the merge (Text CRDT): {merged:?}"
         );
     }
 }

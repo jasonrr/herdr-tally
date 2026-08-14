@@ -22,6 +22,7 @@ use super::comments::CommentsFile;
 use super::errors::{Error, Result};
 use super::lock::{atomic_write, with_file_lock};
 use super::project::Project;
+use super::scratchpads::Scratchpad;
 use super::todos::TodosFile;
 
 /// Fixed genesis actor: the three root containers are created under THIS actor
@@ -178,6 +179,68 @@ pub(crate) fn load_comments_file(doc: &AutoCommit) -> Result<CommentsFile> {
 /// Reconcile a `CommentsFile` into the `comments` root map.
 pub(crate) fn save_comments_file(doc: &mut AutoCommit, cf: &CommentsFile) -> Result<()> {
     reconcile_prop(doc, ROOT, "comments", cf)?;
+    Ok(())
+}
+
+// --- Scratchpads: a Map keyed by pad id under ROOT->scratchpads. ---------
+//
+// Each pad's metadata is reconciled as map scalars (the `Scratchpad` derive
+// skips `content`), and the pad BODY is a separate automerge `Text` child under
+// the `content` key so concurrent edits from two machines merge char-by-char
+// instead of one clobbering the other.
+
+/// The `scratchpads` root Map object id. `ensure_root` (run in `load_doc`)
+/// guarantees it exists; a missing key means the doc wasn't produced by
+/// `load_doc`, which is a bug here.
+fn scratchpads_obj(doc: &AutoCommit) -> Result<automerge::ObjId> {
+    let (_, o) = doc
+        .get(ROOT, "scratchpads")?
+        .ok_or_else(|| Error::Other("scratchpads root missing".into()))?;
+    Ok(o)
+}
+
+/// The pad ids present in the doc (the scratchpads Map's keys).
+pub(crate) fn pad_ids(doc: &AutoCommit) -> Result<Vec<String>> {
+    let sp = scratchpads_obj(doc)?;
+    Ok(doc.keys(&sp).collect()) // map keys = pad ids
+}
+
+/// Hydrate a single pad by id, or `None` if absent. Metadata comes from the
+/// map scalars (autosurgeon skips `content`, so it hydrates empty); the body is
+/// read separately from the `content` Text child.
+pub(crate) fn load_pad(doc: &AutoCommit, id: &str) -> Result<Option<Scratchpad>> {
+    let sp = scratchpads_obj(doc)?;
+    let Some((_, pad_map)) = doc.get(&sp, id)? else {
+        return Ok(None);
+    };
+    let mut s: Scratchpad = hydrate_prop(doc, &sp, id)?; // content skipped -> ""
+    if let Some((_, text_obj)) = doc.get(&pad_map, "content")? {
+        s.content = doc.text(&text_obj)?;
+    }
+    Ok(Some(s))
+}
+
+/// Write a pad: reconcile its metadata scalars, then write the body into the
+/// `content` Text child. On update the existing Text child is REUSED (never
+/// re-`put_object`'d) so `update_text` diffs against it and merge history — the
+/// char-level CRDT — survives.
+pub(crate) fn save_pad(doc: &mut AutoCommit, s: &Scratchpad) -> Result<()> {
+    let sp = scratchpads_obj(doc)?;
+    reconcile_prop(doc, &sp, s.id.as_str(), s)?; // metadata only; content is skipped
+    let (_, pad_map) = doc.get(&sp, s.id.as_str())?.unwrap();
+    // Get-or-create the Text child; reusing it on update keeps the CRDT history.
+    let text_obj = match doc.get(&pad_map, "content")? {
+        Some((_, obj)) => obj,
+        None => doc.put_object(&pad_map, "content", ObjType::Text)?,
+    };
+    doc.update_text(&text_obj, &s.content)?;
+    Ok(())
+}
+
+/// Delete a pad by removing its map key (drops the metadata and Text child).
+pub(crate) fn remove_pad(doc: &mut AutoCommit, id: &str) -> Result<()> {
+    let sp = scratchpads_obj(doc)?;
+    doc.delete(&sp, id)?;
     Ok(())
 }
 

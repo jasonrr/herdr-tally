@@ -163,6 +163,7 @@ impl Project {
         super::sync::parse_repo(&url)
     }
 
+    #[allow(dead_code)] // used by Task 6 migration (reads legacy scratchpads/*.md)
     pub(crate) fn scratch_dir(&self) -> PathBuf {
         self.dir.join("scratchpads")
     }
