@@ -137,6 +137,19 @@ impl Project {
         )
     }
 
+    /// True iff `am_dir` holds at least one `*.automerge` snapshot file. This is
+    /// the "already migrated / genesis saved" signal — NOT `am_dir().exists()`,
+    /// which `with_doc`'s lock creates as an empty dir before migration runs
+    /// (see `migrate_if_needed`). An absent `am_dir` reads as no snapshot.
+    fn has_snapshot(&self) -> bool {
+        std::fs::read_dir(self.am_dir())
+            .map(|rd| {
+                rd.filter_map(|e| e.ok())
+                    .any(|e| e.path().extension().is_some_and(|x| x == "automerge"))
+            })
+            .unwrap_or(false)
+    }
+
     /// One-time JSON->automerge migration, run as the FIRST line of `load_doc`.
     /// On the first load after the backend swap it builds the doc from the
     /// CURRENT legacy JSON/markdown state (one snapshot, not from history) and
@@ -148,9 +161,15 @@ impl Project {
     /// merge — no duplicated todos/pads. If content differs, ops differ and they
     /// correctly union.
     pub(crate) fn migrate_if_needed(&self) -> Result<()> {
-        // am_dir exists => already migrated, or a fresh doc was created. Cheap
-        // path: no lock, no disk scan.
-        if self.am_dir().exists() {
+        // A snapshot file present => already migrated, or a fresh doc was saved.
+        // NOTE: gate on a `*.automerge` FILE, not `am_dir().exists()`: with_doc
+        // locks `am_dir/lock`, and `with_file_lock` does `mkdir -p am_dir` BEFORE
+        // its closure runs load_doc -> migrate_if_needed. So a write-first first
+        // op (create_todo/comment/scratchpad) creates the EMPTY am_dir before we
+        // get here; an `exists()` sentinel would then false-positive and skip
+        // migration, orphaning the legacy store. The mkdir never makes a snapshot
+        // file, so this check is immune. Cheap path: no lock beyond the readdir.
+        if self.has_snapshot() {
             return Ok(());
         }
 
@@ -187,8 +206,8 @@ impl Project {
         // take am_dir/lock then migrate.lock; readers take only migrate.lock.
         with_file_lock(&self.dir.join("migrate"), || {
             // Double-checked locking: another process may have migrated between
-            // the pre-lock check and acquiring the lock.
-            if self.am_dir().exists() {
+            // the pre-lock check and acquiring the lock. Same snapshot-file gate.
+            if self.has_snapshot() {
                 return Ok(());
             }
 
@@ -637,6 +656,43 @@ mod tests {
         assert!(migrated(&p.scratch_dir().join("s_x.md")).exists());
     }
 
+    // Number of comments in ROOT->comments->comments List.
+    fn comment_count(doc: &AutoCommit) -> usize {
+        let (_, cm) = doc.get(ROOT, "comments").unwrap().unwrap();
+        let (_, cl) = doc.get(&cm, "comments").unwrap().unwrap();
+        doc.length(&cl)
+    }
+
+    // P1 regression: when the FIRST store op on an un-migrated project is a
+    // WRITE (via with_doc), `with_file_lock` mkdir -p's am_dir BEFORE
+    // migrate_if_needed runs. A bare `am_dir().exists()` sentinel would then skip
+    // migration and orphan the legacy store; gating on a `*.automerge` FILE does
+    // not. Fails against the old sentinel, passes with the fix.
+    #[test]
+    fn migrates_when_first_op_is_a_write() {
+        let p = new_project();
+        std::fs::write(
+            p.todos_path(),
+            r#"{"revision":1,"todos":[{"id":"t_old","title":"old","priority":"p2"}]}"#,
+        )
+        .unwrap();
+
+        // FIRST op is a write — goes through with_doc, which creates am_dir via
+        // its lock before migrate_if_needed sees it.
+        p.create_todo("fresh", "", "", Vec::new()).unwrap();
+
+        let doc = p.load_doc().unwrap();
+        let mut titles = todo_titles(&doc);
+        titles.sort();
+        assert_eq!(
+            titles,
+            vec!["fresh".to_string(), "old".to_string()],
+            "write-first first op must migrate legacy data, not orphan it"
+        );
+        assert!(!p.todos_path().exists(), "todos.json must be renamed away");
+        assert!(migrated(&p.todos_path()).exists(), "todos.json.migrated");
+    }
+
     // Migration runs exactly once: after it, a fresh todo created via the real
     // path coexists with the migrated one, and a second load_doc neither
     // re-migrates (am_dir exists) nor drops the new todo.
@@ -662,18 +718,28 @@ mod tests {
     }
 
     // R2 convergence: two independent machines migrating the SAME byte-identical
-    // todos.json under the genesis actor produce identical change hashes, so
-    // merging their snapshots dedups — the todo count stays 1, not 2. A doubled
-    // count would mean migration is nondeterministic (STOP condition).
+    // legacy files under the genesis actor produce identical change hashes, so
+    // merging their snapshots dedups — todo/comment/pad counts stay 1, not 2. A
+    // doubled count would mean migration is nondeterministic (STOP condition).
+    // Covers all three entity types (todos, comments, pads) since each has its
+    // own write path (list reconcile, and save_pad's map key + Text child).
     #[test]
     fn concurrent_migration_no_duplicates() {
-        let legacy = r#"{"revision":1,"todos":[{"id":"t_1","title":"same","priority":"p2"}]}"#;
+        let todos = r#"{"revision":1,"todos":[{"id":"t_1","title":"same","priority":"p2"}]}"#;
+        let comments =
+            r#"{"comments":[{"id":"c_1","target":"t_1","kind":"note","text":"same note"}]}"#;
+        let pad_md = "---\nid: s_1\ntitle: Same Pad\ntags: [a]\nstatus: active\nrevision: 1\ncreated: 2026-01-01T00:00:00Z\nupdated: 2026-01-01T00:00:00Z\n---\n# Same Pad\n\nsame body\n";
 
-        // Two "machines": separate store roots, identical legacy input.
+        // Two "machines": separate store roots, byte-identical legacy input.
+        let seed = |proj: &crate::store::testutil::TestProject| {
+            std::fs::write(proj.todos_path(), todos).unwrap();
+            std::fs::write(proj.comments_path(), comments).unwrap();
+            std::fs::write(proj.scratch_dir().join("s_1.md"), pad_md).unwrap();
+        };
         let a = new_project();
         let b = new_project();
-        std::fs::write(a.todos_path(), legacy).unwrap();
-        std::fs::write(b.todos_path(), legacy).unwrap();
+        seed(&a);
+        seed(&b);
         a.load_doc().unwrap(); // migrates independently
         b.load_doc().unwrap(); // migrates independently
 
@@ -689,11 +755,17 @@ mod tests {
 
         let titles = todo_titles(&da);
         assert_eq!(
-            titles.len(),
-            1,
-            "genesis-authored migration must dedup on merge, got {titles:?}"
+            titles,
+            vec!["same".to_string()],
+            "todos must dedup on merge, got {titles:?}"
         );
-        assert_eq!(titles, vec!["same".to_string()]);
+        assert_eq!(
+            comment_count(&da),
+            1,
+            "comments must dedup on merge (genesis-authored)"
+        );
+        let pads = pad_ids(&da).unwrap();
+        assert_eq!(pads, vec!["s_1".to_string()], "pads must dedup on merge");
     }
 
     // Two sequential mutations on the same project write to the SAME owner file
