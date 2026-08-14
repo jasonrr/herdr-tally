@@ -132,8 +132,9 @@ pub use todo_def::Todo;
 #[derive(Debug, Default, Serialize, Deserialize, autosurgeon::Reconcile, autosurgeon::Hydrate)]
 #[serde(default)]
 pub(crate) struct TodosFile {
+    // pub(crate) so amdoc::dump can read the store revision for `tally dump`.
     #[serde(rename = "revision")]
-    revision: i64,
+    pub(crate) revision: i64,
     // pub(crate) so the migration (amdoc.rs) can normalize priorities and walk
     // `extra` after deserializing a legacy todos.json.
     #[serde(rename = "todos", deserialize_with = "null_default")]

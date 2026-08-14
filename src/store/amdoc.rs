@@ -503,6 +503,38 @@ pub(crate) fn remove_pad(doc: &mut AutoCommit, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// The whole store, hydrated and ready to serialize — the `tally dump` payload.
+#[derive(serde::Serialize)]
+pub(crate) struct StoreDump {
+    pub revision: i64,
+    pub todos: Vec<super::todos::Todo>,
+    pub comments: Vec<super::comments::Comment>,
+    pub scratchpads: Vec<Scratchpad>,
+}
+
+impl Project {
+    /// The entire store, hydrated, for `tally dump`. All todos, all comments,
+    /// all pads (including archived) — the readable replacement for the retired
+    /// `cat todos.json`.
+    pub(crate) fn dump(&self) -> Result<StoreDump> {
+        let doc = self.load_doc()?;
+        let tf = load_todos_file(&doc)?;
+        let cf = load_comments_file(&doc)?;
+        let mut scratchpads = Vec::new();
+        for id in pad_ids(&doc)? {
+            if let Some(p) = load_pad(&doc, &id)? {
+                scratchpads.push(p);
+            }
+        }
+        Ok(StoreDump {
+            revision: tf.revision,
+            todos: tf.todos,
+            comments: cf.comments,
+            scratchpads,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

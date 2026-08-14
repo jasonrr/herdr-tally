@@ -12,6 +12,7 @@ use serde::Serialize;
 use crate::store::{Project, resolve_project, resolve_project_in};
 
 mod comments;
+mod dump;
 mod render;
 mod scratchpads;
 mod sync;
@@ -40,6 +41,11 @@ pub fn sync(args: &[String]) -> ExitCode {
         &crate::store::GhCli,
         &mut io::stdout(),
     ))
+}
+
+/// `tally dump …` entry: real store root, stdout.
+pub fn dump(args: &[String]) -> ExitCode {
+    exit(dump::run(args, None, &mut io::stdout()))
 }
 
 /// Only main turns a code into a process exit — the run functions return codes
@@ -240,6 +246,12 @@ mod tests {
             let args = self.with_project(argv);
             let mut buf = Vec::new();
             let code = super::scratchpads::run(&args, Some(self.root.path()), &mut buf);
+            (code, String::from_utf8(buf).unwrap())
+        }
+        fn dump(&self, argv: &[&str]) -> (i32, String) {
+            let args = self.with_project(argv);
+            let mut buf = Vec::new();
+            let code = super::dump::run(&args, Some(self.root.path()), &mut buf);
             (code, String::from_utf8(buf).unwrap())
         }
     }
@@ -450,5 +462,45 @@ mod tests {
         let s: crate::store::Scratchpad = serde_json::from_str(&out).unwrap();
         let (code, _) = cli.scratch(&["clear", &s.id]);
         assert_ne!(code, 0, "clear without --expected-revision should fail");
+    }
+
+    #[test]
+    fn dump_json() {
+        let cli = Cli::new();
+        assert_eq!(
+            cli.todos(&["create", "--title", "DumpMe", "--priority", "p1"])
+                .0,
+            0
+        );
+        let (code, out) = cli.dump(&["--json"]);
+        assert_eq!(code, 0);
+        let v: serde_json::Value =
+            serde_json::from_str(&out).unwrap_or_else(|e| panic!("json: {e} ({out:?})"));
+        let titles: Vec<&str> = v["todos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|t| t["title"].as_str())
+            .collect();
+        assert!(
+            titles.contains(&"DumpMe"),
+            "dump json missing seeded todo: {out:?}"
+        );
+    }
+
+    #[test]
+    fn dump_human_default() {
+        let cli = Cli::new();
+        assert_eq!(cli.todos(&["create", "--title", "DumpHuman"]).0, 0);
+        let (code, out) = cli.dump(&[]);
+        assert_eq!(code, 0);
+        assert!(
+            out.contains("todos:"),
+            "human dump missing summary: {out:?}"
+        );
+        assert!(
+            out.contains("DumpHuman"),
+            "human dump missing seeded todo: {out:?}"
+        );
     }
 }

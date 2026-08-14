@@ -53,8 +53,9 @@ pub struct Comment {
 #[derive(Debug, Default, Serialize, Deserialize, autosurgeon::Reconcile, autosurgeon::Hydrate)]
 #[serde(default)]
 pub(crate) struct CommentsFile {
+    // pub(crate) so amdoc::dump can read every comment for `tally dump`.
     #[serde(rename = "comments")]
-    comments: Vec<Comment>,
+    pub(crate) comments: Vec<Comment>,
 }
 
 /// One row of the per-target comment view: note count + the most recent

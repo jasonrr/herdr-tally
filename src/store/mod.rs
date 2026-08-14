@@ -1,6 +1,7 @@
 // Store: single source of truth, same rule as the Go original. CLI/MCP/TUI
 // stay thin adapters over this module.
 mod amdoc;
+pub(crate) use amdoc::StoreDump;
 mod comments;
 mod errors;
 mod ids;
