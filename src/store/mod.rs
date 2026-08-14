@@ -1,5 +1,7 @@
 // Store: single source of truth, same rule as the Go original. CLI/MCP/TUI
 // stay thin adapters over this module.
+#[cfg(test)]
+mod amspike;
 mod comments;
 mod errors;
 mod ids;
