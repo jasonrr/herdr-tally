@@ -21,8 +21,11 @@ pub(crate) mod testutil;
 /// field's `Default`, so the never-written key hydrates cleanly instead of
 /// erroring as missing. Used for fields carried outside the derived map:
 /// `Todo.extra` (an untyped `serde_json::Value` map autosurgeon can't model —
-/// and unknown keys survive reconcile anyway, since it never prunes) and
-/// `Scratchpad.content` (written separately as an automerge `Text` child).
+/// doc-resident unknown keys survive reconcile anyway, since it never prunes and
+/// list elements diff by `#[key]` identity, not position) and `Scratchpad.content`
+/// (written separately as an automerge `Text` child). Caveat: am_skip writes
+/// NOTHING, so a struct-resident `extra` reconciled into a FRESH doc is dropped —
+/// migration (Task 6) must write those keys explicitly.
 pub(crate) mod am_skip {
     use autosurgeon::{HydrateError, Prop, ReadDoc, Reconciler};
 

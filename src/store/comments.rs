@@ -18,6 +18,12 @@ use super::todos::{epoch_from_rfc3339, format_rfc3339, now};
 )]
 #[serde(default)]
 pub struct Comment {
+    // `#[key]` makes autosurgeon's list reconcile diff comments by identity, not
+    // array position — see the matching note on `Todo.id`. The struct-level key
+    // code the derive emits uses fully-qualified `::std::result::Result`, so it
+    // is safe against this file's `super::errors::Result` alias (no inner module
+    // needed).
+    #[key]
     #[serde(rename = "id")]
     pub id: String,
     /// t_… | s_… | plan rel_path. Type is inferred from the prefix by adapters.

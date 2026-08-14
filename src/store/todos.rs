@@ -73,6 +73,13 @@ mod todo_def {
     )]
     #[serde(default)]
     pub struct Todo {
+        // `#[key]` makes autosurgeon's list reconcile diff todos by identity, not
+        // array position. Without it, deleting a non-tail todo makes autosurgeon
+        // reuse the removed element's automerge object for its successor —
+        // overwriting fields and mis-attributing any doc-resident unmodeled key
+        // (the exact cross-version data `extra` exists to protect), and churning
+        // CRDT object identity so cross-machine merges diverge.
+        #[key]
         #[serde(rename = "id")]
         pub id: String,
         #[serde(rename = "title")]
@@ -1298,5 +1305,68 @@ mod tests {
         // And the modeled mutation took effect.
         let t: Todo = hydrate_prop(&reloaded, ROOT, "todo").unwrap();
         assert_eq!(t.title, "edited");
+    }
+
+    // Regression guard for identity-based list reconcile (`#[key]` on Todo.id):
+    // deleting a non-tail todo must not migrate a sibling's doc-resident unknown
+    // key onto a different todo. With positional diffing this fails — t_a's slot
+    // (position 0) would be reused for t_b, mis-attributing t_b's key.
+    #[test]
+    fn reconcile_by_id_preserves_sibling_unknown_key_on_delete() {
+        use automerge::transaction::Transactable;
+        use automerge::{AutoCommit, ObjType, ROOT, ReadDoc, Value};
+        use autosurgeon::reconcile_prop;
+
+        let mk = |id: &str| Todo {
+            id: id.into(),
+            title: id.into(),
+            ..Default::default()
+        };
+
+        // Reconcile the todo LIST directly at "todos" (this is the list-element
+        // diff under test, not the enclosing TodosFile map).
+        let mut doc = AutoCommit::new();
+        let todos = vec![mk("t_a"), mk("t_b"), mk("t_c")];
+        reconcile_prop(&mut doc, ROOT, "todos", &todos).unwrap();
+
+        // Walk the `todos` list, returning the map object holding `want`'s id.
+        let find_obj = |doc: &AutoCommit, want: &str| {
+            let (_, list) = doc.get(ROOT, "todos").unwrap().unwrap();
+            for i in 0..doc.length(&list) {
+                let (v, elem) = doc.get(&list, i).unwrap().unwrap();
+                assert!(matches!(v, Value::Object(ObjType::Map)));
+                let (idv, _) = doc.get(&elem, "id").unwrap().unwrap();
+                if idv.to_str() == Some(want) {
+                    return Some(elem);
+                }
+            }
+            None
+        };
+
+        // A newer machine stamped an unmodeled key on t_b's object.
+        let b_obj = find_obj(&doc, "t_b").expect("t_b present");
+        doc.put(&b_obj, "future_field", "keep").unwrap();
+
+        // Delete the HEAD todo (t_a) and reconcile the remaining [t_b, t_c].
+        let remaining = vec![mk("t_b"), mk("t_c")];
+        reconcile_prop(&mut doc, ROOT, "todos", &remaining).unwrap();
+
+        // t_b's object still carries its unmodeled key (matched by identity).
+        let b_obj2 = find_obj(&doc, "t_b").expect("t_b still present");
+        let got = doc.get(&b_obj2, "future_field").unwrap();
+        assert_eq!(
+            got.and_then(|(v, _)| v.to_str().map(str::to_string)),
+            Some("keep".to_string()),
+            "t_b's unmodeled key must follow t_b by identity across a non-tail delete"
+        );
+
+        // The key did not leak onto any sibling (positional diff would leak it).
+        let c_obj = find_obj(&doc, "t_c").expect("t_c present");
+        assert!(
+            doc.get(&c_obj, "future_field").unwrap().is_none(),
+            "future_field must not leak onto a sibling todo"
+        );
+        let (_, list) = doc.get(ROOT, "todos").unwrap().unwrap();
+        assert_eq!(doc.length(&list), 2, "list should be exactly [t_b, t_c]");
     }
 }
