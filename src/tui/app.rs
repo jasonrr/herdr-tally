@@ -907,16 +907,12 @@ impl App {
                 _ => {}
             },
             MouseEventKind::Down(MouseButton::Left) => self.mouse_down(m),
-            MouseEventKind::Drag(MouseButton::Left) => {
-                if self.mode == Mode::Edit {
-                    self.forward_mouse(m);
-                }
+            MouseEventKind::Drag(MouseButton::Left) if self.mode == Mode::Edit => {
+                self.forward_mouse(m);
             }
-            MouseEventKind::Up(MouseButton::Left) => {
-                if self.mode == Mode::Edit {
-                    self.forward_mouse(m); // edtui finalizes the drag selection
-                    self.copy_selection(); // release copies it to pbcopy
-                }
+            MouseEventKind::Up(MouseButton::Left) if self.mode == Mode::Edit => {
+                self.forward_mouse(m); // edtui finalizes the drag selection
+                self.copy_selection(); // release copies it to pbcopy
             }
             _ => {}
         }

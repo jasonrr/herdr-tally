@@ -194,7 +194,7 @@ pub fn list(root: &Path, paths: &[String]) -> Vec<Plan> {
         });
     }
     // Most-recent-first (Go: sort.SliceStable with ModTime.After).
-    out.sort_by(|a, b| b.mod_time.cmp(&a.mod_time));
+    out.sort_by_key(|b| std::cmp::Reverse(b.mod_time));
     out
 }
 
