@@ -392,11 +392,7 @@ impl App {
                 } else {
                     t
                 };
-                self.blocked = t
-                    .iter()
-                    .filter(|x| self.p.is_blocked(x))
-                    .map(|x| x.id.clone())
-                    .collect();
+                self.blocked = self.p.blocked_ids().into_iter().collect();
                 self.todos = t;
             }
             Err(e) => self.status = format!("load failed: {e}"),

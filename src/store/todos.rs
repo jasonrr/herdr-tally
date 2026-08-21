@@ -363,14 +363,27 @@ impl Project {
         self.set_complete(id, false, release_lock)
     }
 
-    pub fn is_blocked(&self, t: &Todo) -> bool {
-        if t.blockers.is_empty() {
-            return false;
-        }
-        match self.load_todos() {
-            Ok(tf) => blocked_against(t, &tf.todos),
-            Err(_) => false,
-        }
+    /// Blocked-id set computed from a single load. Callers rendering a whole list
+    /// use this instead of per-todo `is_blocked`, which re-hydrates the store on
+    /// every call — O(N) full loads per render on a large store.
+    pub fn blocked_ids(&self) -> BTreeSet<String> {
+        let all = match self.load_todos() {
+            Ok(tf) => tf.todos,
+            Err(_) => return BTreeSet::new(),
+        };
+        let status: HashMap<&str, &str> = all
+            .iter()
+            .map(|x| (x.id.as_str(), x.status.as_str()))
+            .collect();
+        all.iter()
+            .filter(|t| {
+                !t.blockers.is_empty()
+                    && t.blockers
+                        .iter()
+                        .any(|b| status.get(b.as_str()).copied() != Some("completed"))
+            })
+            .map(|t| t.id.clone())
+            .collect()
     }
 
     pub fn list_todos(&self, f: TodoFilter) -> Result<Vec<Todo>> {
@@ -893,7 +906,7 @@ mod tests {
             got.blockers
         );
         assert!(
-            !p.is_blocked(&got),
+            !p.blocked_ids().contains(&got.id),
             "main should no longer be blocked after dep was deleted"
         );
     }

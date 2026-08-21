@@ -33,6 +33,8 @@ fn sprint_tags(tags: &[String]) -> String {
 }
 
 pub(crate) fn render_todos(out: &mut dyn Write, p: &Project, todos: &[Todo]) -> io::Result<()> {
+    // One store load for the whole render; per-todo `is_blocked` re-hydrates.
+    let blocked = p.blocked_ids();
     writeln!(out, "# {} — todos\n", p.name)?;
     for s in STATUS_ORDER {
         let group: Vec<&Todo> = todos.iter().filter(|t| t.status == s).collect();
@@ -43,7 +45,7 @@ pub(crate) fn render_todos(out: &mut dyn Write, p: &Project, todos: &[Todo]) -> 
         for t in group {
             let checkbox = if t.status == "completed" { "x" } else { " " };
             let mut line = format!("- [{}] {} {}", checkbox, prio_mark(&t.priority), t.title);
-            if p.is_blocked(t) {
+            if blocked.contains(&t.id) {
                 line.push_str(" ⛔");
             }
             if t.lock.is_some() {
