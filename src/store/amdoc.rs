@@ -47,16 +47,24 @@ fn machine_id_bytes() -> Result<[u8; 16]> {
 
 #[cfg(any(target_os = "linux", test))]
 fn parse_machine_id(value: &str) -> Result<[u8; 16]> {
-    u128::from_str_radix(value.trim(), 16)
-        .map(u128::to_be_bytes)
-        .map_err(|_| Error::Other("invalid machine-id".into()))
+    let id = u128::from_str_radix(value.trim(), 16)
+        .map_err(|_| Error::Other("invalid machine-id".into()))?;
+    if id == 0 {
+        return Err(Error::Other("uninitialized machine-id".into()));
+    }
+    Ok(id.to_be_bytes())
 }
 
 #[cfg(target_os = "linux")]
 fn machine_id_bytes() -> Result<[u8; 16]> {
-    let value = std::fs::read_to_string("/etc/machine-id")
-        .or_else(|_| std::fs::read_to_string("/var/lib/dbus/machine-id"))?;
-    parse_machine_id(&value)
+    for path in ["/etc/machine-id", "/var/lib/dbus/machine-id"] {
+        if let Ok(value) = std::fs::read_to_string(path)
+            && let Ok(id) = parse_machine_id(&value)
+        {
+            return Ok(id);
+        }
+    }
+    Err(Error::Other("no valid Linux machine-id".into()))
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -631,6 +639,7 @@ mod tests {
             ]
         );
         assert!(parse_machine_id("not-a-machine-id").is_err());
+        assert!(parse_machine_id("00000000000000000000000000000000").is_err());
     }
 
     // Raw helper: append a todo map with the given title to ROOT->todos->todos
