@@ -7,10 +7,10 @@
 // Load merges all files (order-independent, idempotent — proven in the Task 1
 // spike), so each machine's edits reach every other machine on the next load.
 //
-// The machine identity is the hardware host UUID (`gethostuuid`), computed
-// fresh every run — never read or written to a file. That guarantees one owner
-// file per machine (no id collision, no persisted-id drift) while doubling as
-// the automerge actor so a machine's changes carry a stable authorship.
+// The machine identity comes from the OS's stable machine id (`gethostuuid` on
+// macOS, `/etc/machine-id` on Linux). That guarantees one owner file per
+// machine while doubling as the automerge actor so a machine's changes carry
+// stable authorship.
 // This is the storage core; every public item is a seam that Tasks 4–7 (entity
 // read/write, migration, adapters) call.
 
@@ -31,11 +31,8 @@ use super::todos::TodosFile;
 /// history. See `ensure_root`.
 const GENESIS_ACTOR: [u8; 16] = [0u8; 16];
 
-/// Reads the hardware host UUID (macOS `gethostuuid`) as the machine identity.
-/// No file backs this — it is recomputed from hardware every run, which is what
-/// keeps the single-owner-file guarantee (a persisted or random id could
-/// collide or drift and reintroduce two machines writing one file).
-fn gethostuuid_bytes() -> Result<[u8; 16]> {
+#[cfg(target_os = "macos")]
+fn machine_id_bytes() -> Result<[u8; 16]> {
     let mut buf = [0u8; 16];
     let ts = libc::timespec {
         tv_sec: 0,
@@ -48,10 +45,37 @@ fn gethostuuid_bytes() -> Result<[u8; 16]> {
     Ok(buf)
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn parse_machine_id(value: &str) -> Result<[u8; 16]> {
+    let id = u128::from_str_radix(value.trim(), 16)
+        .map_err(|_| Error::Other("invalid machine-id".into()))?;
+    if id == 0 {
+        return Err(Error::Other("uninitialized machine-id".into()));
+    }
+    Ok(id.to_be_bytes())
+}
+
+#[cfg(target_os = "linux")]
+fn machine_id_bytes() -> Result<[u8; 16]> {
+    for path in ["/etc/machine-id", "/var/lib/dbus/machine-id"] {
+        if let Ok(value) = std::fs::read_to_string(path)
+            && let Ok(id) = parse_machine_id(&value)
+        {
+            return Ok(id);
+        }
+    }
+    Err(Error::Other("no valid Linux machine-id".into()))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn machine_id_bytes() -> Result<[u8; 16]> {
+    Err(Error::Other("unsupported OS: no stable machine id".into()))
+}
+
 impl Project {
     /// This machine's automerge actor = its hardware host UUID.
     fn machine_actor(&self) -> Result<ActorId> {
-        Ok(ActorId::from(gethostuuid_bytes()?))
+        Ok(ActorId::from(machine_id_bytes()?))
     }
 
     /// Hex of the machine actor — the basename of this machine's owner file.
@@ -604,6 +628,19 @@ impl Project {
 mod tests {
     use super::*;
     use crate::store::testutil::new_project;
+
+    #[test]
+    fn parses_linux_machine_id() {
+        assert_eq!(
+            parse_machine_id("00112233445566778899aabbccddeeff\n").unwrap(),
+            [
+                0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+                0xee, 0xff,
+            ]
+        );
+        assert!(parse_machine_id("not-a-machine-id").is_err());
+        assert!(parse_machine_id("00000000000000000000000000000000").is_err());
+    }
 
     // Raw helper: append a todo map with the given title to ROOT->todos->todos
     // List. (Entity helpers arrive in Task 4; here we drive automerge directly.)
