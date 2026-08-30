@@ -33,6 +33,9 @@ export TALLY_BIN="$work/pluginbin/tally"
 # Phase-2a (npm deps) coverage lives in the sibling tests/pi-ask-user.test.sh;
 # this legacy test isn't set up to stub npm, so skip that phase to stay hermetic.
 export TALLY_NPM=-
+# Likewise skip phase-2b: this test never stubs `pi`, so without this it would run
+# a real `pi install <scratch-dir>` against the developer's global pi config.
+export TALLY_PI=-
 
 # Seed a pre-existing global CLAUDE.md to prove the block is appended, not clobbering.
 mkdir -p "$HOME/.claude"
