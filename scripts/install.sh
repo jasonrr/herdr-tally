@@ -85,7 +85,7 @@ if [ "$npm_bin" != "-" ] && [ -f "$plugin_root/package.json" ] && [ ! -d "$plugi
     echo "tally: could not install pi runtime dependencies. Run:" >&2
     echo "  $npm_bin install --omit=dev --prefix \"$plugin_root\"" >&2
   fi
-elif [ "$npm_bin" != "-" ] && [ ! -d "$plugin_root/node_modules/pi-ask-user" ]; then
+elif [ "$npm_bin" != "-" ] && [ -f "$plugin_root/package.json" ] && [ ! -d "$plugin_root/node_modules/pi-ask-user" ]; then
   echo "tally: npm not found; pi runtime dependency was not installed. Run:" >&2
   echo "  npm install --omit=dev --prefix \"$plugin_root\"" >&2
 fi
