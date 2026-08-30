@@ -24,7 +24,7 @@ function bundledPackageDir(): string | null {
 export default function (pi: ExtensionAPI) {
   let activated = false;
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (_event, _ctx) => {
     if (activated) return;
     if (pi.getAllTools().some((t) => t.name === "ask_user")) {
       console.error("[tally-ask-user] standalone ask_user present; bundled copy inactive");

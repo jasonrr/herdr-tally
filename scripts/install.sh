@@ -51,6 +51,13 @@ fi
 
 # --- 2. MCP server registration (best-effort) -----------------------------------
 find_claude() {
+  # Test seam mirroring TALLY_PI/TALLY_NPM: override the claude binary, or
+  # TALLY_CLAUDE=- to force "not found". Without it the hardcoded absolute paths
+  # below bypass a test's HOME/PATH sandbox and hit the real global config.
+  if [ -n "${TALLY_CLAUDE:-}" ]; then
+    [ "$TALLY_CLAUDE" = "-" ] && return 1
+    printf '%s\n' "$TALLY_CLAUDE"; return 0
+  fi
   for c in "$HOME/.local/bin/claude" /opt/homebrew/bin/claude /usr/local/bin/claude; do
     [ -x "$c" ] && { printf '%s\n' "$c"; return 0; }
   done
@@ -80,18 +87,28 @@ fi
 # pi-ask-user's peerDependencies (pi-coding-agent, pi-tui, typebox — ~136MB)
 # must NOT be materialized here (matches the committed .npmrc; explicit here in
 # case npm's cwd isn't $plugin_root and it misses that file).
+# Reinstall when the bundled copy is absent OR its version drifts from the pin,
+# so a future pi-ask-user bump actually propagates to local-path installs (bare
+# directory-existence would pin the old copy forever).
+# ponytail: naive JSON scrape (first "pi-ask-user" dep pin / first "version");
+# the pins are exact semver, no ranges — swap for a real parser only if that changes.
 # Test seam mirroring TALLY_PI: override the npm binary, or TALLY_NPM=- to skip.
 npm_bin="${TALLY_NPM:-npm}"
-if [ "$npm_bin" != "-" ] && [ -f "$plugin_root/package.json" ] && [ ! -d "$plugin_root/node_modules/pi-ask-user" ] && command -v "$npm_bin" >/dev/null 2>&1; then
-  if "$npm_bin" install --omit=dev --legacy-peer-deps --prefix "$plugin_root" >/dev/null 2>&1; then
-    echo "tally: installed pi runtime dependencies -> $plugin_root/node_modules"
+pinned=""; installed=""
+[ -f "$plugin_root/package.json" ] && pinned=$(sed -n 's/.*"pi-ask-user"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$plugin_root/package.json" | head -n1)
+[ -f "$plugin_root/node_modules/pi-ask-user/package.json" ] && installed=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$plugin_root/node_modules/pi-ask-user/package.json" | head -n1)
+if [ "$npm_bin" != "-" ] && [ -n "$pinned" ] && [ "$installed" != "$pinned" ]; then
+  if command -v "$npm_bin" >/dev/null 2>&1; then
+    if "$npm_bin" install --omit=dev --legacy-peer-deps --prefix "$plugin_root" >/dev/null 2>&1; then
+      echo "tally: installed pi runtime dependencies -> $plugin_root/node_modules"
+    else
+      echo "tally: could not install pi runtime dependencies. Run:" >&2
+      echo "  $npm_bin install --omit=dev --legacy-peer-deps --prefix \"$plugin_root\"" >&2
+    fi
   else
-    echo "tally: could not install pi runtime dependencies. Run:" >&2
-    echo "  $npm_bin install --omit=dev --legacy-peer-deps --prefix \"$plugin_root\"" >&2
+    echo "tally: npm not found; pi runtime dependency was not installed. Run:" >&2
+    echo "  npm install --omit=dev --legacy-peer-deps --prefix \"$plugin_root\"" >&2
   fi
-elif [ "$npm_bin" != "-" ] && [ -f "$plugin_root/package.json" ] && [ ! -d "$plugin_root/node_modules/pi-ask-user" ]; then
-  echo "tally: npm not found; pi runtime dependency was not installed. Run:" >&2
-  echo "  npm install --omit=dev --prefix \"$plugin_root\"" >&2
 fi
 
 # --- 2b. pi package registration (best-effort) ---------------------------------
