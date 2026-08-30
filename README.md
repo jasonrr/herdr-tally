@@ -162,6 +162,10 @@ pi install /path/to/herdr-tally                  # a local checkout
 pi install git:github.com/jasonrr/herdr-tally    # after push — no clone needed
 ```
 
+`ask_user` (from [pi-ask-user](https://github.com/edlsh/pi-ask-user)) ships bundled
+with tally — no separate install needed. If you also have `pi-ask-user` installed
+on its own, that copy wins and the bundled one stays inactive.
+
 You get two pi-only skills — `/skill:tally` (CLI store adapter) and `/skill:herdr`
 (worktree/pane primitives) — plus the shared dev-loop skills under bare names
 (`/skill:brainstorm`, `/skill:plan`, `/skill:build`, `/skill:debug`,
