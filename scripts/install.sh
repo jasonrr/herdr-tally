@@ -1,8 +1,9 @@
 #!/bin/sh
 # install.sh — tally's herdr [[build]] step. Runs on every `herdr plugin install`
-# and re-link. Four phases:
+# and re-link. Five phases:
 #   1. fetch-or-build the binary (CRITICAL — aborts the install on failure).
 #   2. register the tally MCP server with Claude Code (best-effort).
+#   2a. install pi runtime dependencies for local-path installs (best-effort).
 #   2b. register the pi package so pi sessions discover tally (best-effort).
 #   3. write the tally guidance block into ~/.claude/CLAUDE.md (best-effort).
 # Best-effort = a failure prints a manual-fix command and we still exit 0, so the
@@ -68,6 +69,25 @@ if claude_bin=$(find_claude); then
 else
   echo "tally: 'claude' CLI not found on PATH. Register the MCP server with:" >&2
   echo "  $manual_mcp" >&2
+fi
+
+# --- 2a. pi runtime dependencies (best-effort) -------------------------------
+# Local-path pi installs load the package in place and never run npm install,
+# so the bundled pi-ask-user bridge (pi/extensions/ask-user-bridge.ts) would
+# find no node_modules. Git installs run npm install themselves; this covers
+# the local path. Never fatal — the bridge no-ops silently without the dep.
+# Test seam mirroring TALLY_PI: override the npm binary, or TALLY_NPM=- to skip.
+npm_bin="${TALLY_NPM:-npm}"
+if [ "$npm_bin" != "-" ] && [ -f "$plugin_root/package.json" ] && [ ! -d "$plugin_root/node_modules/pi-ask-user" ] && command -v "$npm_bin" >/dev/null 2>&1; then
+  if "$npm_bin" install --omit=dev --prefix "$plugin_root" >/dev/null 2>&1; then
+    echo "tally: installed pi runtime dependencies -> $plugin_root/node_modules"
+  else
+    echo "tally: could not install pi runtime dependencies. Run:" >&2
+    echo "  $npm_bin install --omit=dev --prefix \"$plugin_root\"" >&2
+  fi
+elif [ "$npm_bin" != "-" ] && [ ! -d "$plugin_root/node_modules/pi-ask-user" ]; then
+  echo "tally: npm not found; pi runtime dependency was not installed. Run:" >&2
+  echo "  npm install --omit=dev --prefix \"$plugin_root\"" >&2
 fi
 
 # --- 2b. pi package registration (best-effort) ---------------------------------
