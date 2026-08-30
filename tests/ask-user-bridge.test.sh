@@ -2,7 +2,7 @@
 set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
-ROOT="$root" NODE_NO_WARNINGS=1 node --input-type=module <<'NODE'
+ROOT="$root" NODE_NO_WARNINGS=1 node --input-type=module 2>/dev/null <<'NODE'
 import { pathToFileURL } from "node:url";
 const bridge = await import(pathToFileURL(`${process.env.ROOT}/pi/extensions/ask-user-bridge.ts`).href);
 if (bridge.shouldWriteMarker(true)) throw new Error("interactive TTY must stay silent");
