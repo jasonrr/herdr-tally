@@ -7,7 +7,8 @@ import { pathToFileURL } from "node:url";
 // bundledDependencies). Registers the bundled ask_user tool and contributes
 // its ask-user skill ONLY when no other ask_user is loaded — a standalone
 // `pi install npm:pi-ask-user` copy wins, so the two never collide.
-// "[tally-ask-user] …" markers are the greppable test seam (same as routing.ts).
+// Non-TTY "[tally-ask-user] …" markers are the greppable test seam. Raw
+// stderr must stay silent in the interactive TUI; it corrupts Pi's rendering.
 // ponytail: per-session flag, no standalone-copy change watch; if a user
 // installs/removes pi-ask-user mid-session, /reload re-evaluates.
 
@@ -21,13 +22,21 @@ function bundledPackageDir(): string | null {
   }
 }
 
+export function shouldWriteMarker(stderrIsTTY = process.stderr.isTTY === true): boolean {
+  return !stderrIsTTY;
+}
+
+function writeMarker(message: string): void {
+  if (shouldWriteMarker()) console.error(message);
+}
+
 export default function (pi: ExtensionAPI) {
   let activated = false;
 
-  pi.on("session_start", async (_event, _ctx) => {
+  pi.on("session_start", async (_event, ctx) => {
     if (activated) return;
     if (pi.getAllTools().some((t) => t.name === "ask_user")) {
-      console.error("[tally-ask-user] standalone ask_user present; bundled copy inactive");
+      writeMarker("[tally-ask-user] standalone ask_user present; bundled copy inactive");
       return;
     }
     const dir = bundledPackageDir();
@@ -36,9 +45,11 @@ export default function (pi: ExtensionAPI) {
       const mod = await import(pathToFileURL(join(dir, "index.ts")).href);
       mod.default(pi);
       activated = true;
-      console.error("[tally-ask-user] bundled ask_user registered");
+      writeMarker("[tally-ask-user] bundled ask_user registered");
     } catch (err) {
-      console.error(`[tally-ask-user] bundled ask_user failed to load: ${err}`);
+      const message = `[tally-ask-user] bundled ask_user failed to load: ${err}`;
+      if (shouldWriteMarker()) console.error(message);
+      else ctx.ui.notify(message, "error");
     }
   });
 
