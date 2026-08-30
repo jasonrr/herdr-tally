@@ -43,8 +43,23 @@ if [ -z "$existing" ]; then
   project="$(printf '%s' "${HERDR_PLUGIN_CONTEXT_JSON:-}" \
     | jq -r '.focused_pane_cwd // .workspace_cwd // empty' 2>/dev/null || true)"
   project="${project:-$PWD}"
+  # Pick split direction from the caller pane's shape (rects are in terminal
+  # cells; cells are ~2x taller than wide, so weight rows to compare visual
+  # shape): window visually wider than tall → split right, else down.
+  direction="right"
+  if [ -n "${HERDR_WORKSPACE_ID:-}" ]; then
+    focused_id="$($herdr pane list --workspace "$HERDR_WORKSPACE_ID" 2>/dev/null \
+      | jq -r '[.result.panes[]? | select(.focused)][0].pane_id // empty')" || true
+    if [ -n "$focused_id" ]; then
+      read -r w h <<<"$($herdr pane layout --pane "$focused_id" 2>/dev/null \
+        | jq -r '.result.layout.panes[0].rect | "\(.width) \(.height)"')" || true
+      if [ -n "${w:-}" ] && [ -n "${h:-}" ] && [ $(( h * 2 )) -ge "$w" ]; then
+        direction="down"
+      fi
+    fi
+  fi
   "$herdr" plugin pane open --plugin tally --entrypoint "$kind" \
-    --placement split --direction right --cwd "$project" --focus
+    --placement split --direction "$direction" --cwd "$project" --focus
 elif [ "$focused" = "true" ]; then
   "$herdr" pane close "$existing"
 else
