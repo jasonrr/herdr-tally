@@ -30,6 +30,16 @@ export TALLY_FETCH_OR_BUILD="$work/fob.sh"
 export HERDR_PLUGIN_ROOT="$work"          # so bin path = $work/bin/tally ... see note
 # Point the binary the MCP command references at our stub location:
 export TALLY_BIN="$work/pluginbin/tally"
+# Phase-2a (npm deps) coverage lives in the sibling tests/pi-ask-user.test.sh;
+# this legacy test isn't set up to stub npm, so skip that phase to stay hermetic.
+export TALLY_NPM=-
+# Likewise skip phase-2b: this test never stubs `pi`, so without this it would run
+# a real `pi install <scratch-dir>` against the developer's global pi config.
+export TALLY_PI=-
+# Force the claude stub: find_claude checks hardcoded /opt/homebrew + /usr/local
+# paths that HOME/PATH overrides don't shadow, so without this seam a Homebrew
+# claude would get real `mcp add/remove` run against the user's global config.
+export TALLY_CLAUDE="$work/bin/claude"
 
 # Seed a pre-existing global CLAUDE.md to prove the block is appended, not clobbering.
 mkdir -p "$HOME/.claude"
@@ -52,8 +62,10 @@ markers2=$(grep -c "<!-- tally:start -->" "$HOME/.claude/CLAUDE.md" 2>/dev/null 
 check "re-run leaves exactly one block" "$markers2" "1"
 
 # ===== Case B: claude absent -> still exit 0 ====================================
+# TALLY_CLAUDE=- makes find_claude report "not found" (the seam's disable value),
+# exercising the missing-claude branch without depending on PATH contents.
 rm -f "$work/claude.log"
-PATH="/usr/bin:/bin" HOME="$work/home" sh "$script" >/dev/null 2>&1; rc=$?
+PATH="/usr/bin:/bin" HOME="$work/home" TALLY_CLAUDE=- sh "$script" >/dev/null 2>&1; rc=$?
 check "exit 0 when claude missing" "$rc" "0"
 
 exit $fail
