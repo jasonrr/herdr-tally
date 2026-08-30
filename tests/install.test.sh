@@ -30,6 +30,9 @@ export TALLY_FETCH_OR_BUILD="$work/fob.sh"
 export HERDR_PLUGIN_ROOT="$work"          # so bin path = $work/bin/tally ... see note
 # Point the binary the MCP command references at our stub location:
 export TALLY_BIN="$work/pluginbin/tally"
+# Phase-2a (npm deps) coverage lives in the sibling tests/pi-ask-user.test.sh;
+# this legacy test isn't set up to stub npm, so skip that phase to stay hermetic.
+export TALLY_NPM=-
 
 # Seed a pre-existing global CLAUDE.md to prove the block is appended, not clobbering.
 mkdir -p "$HOME/.claude"
