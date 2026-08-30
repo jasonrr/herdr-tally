@@ -76,14 +76,18 @@ fi
 # so the bundled pi-ask-user bridge (pi/extensions/ask-user-bridge.ts) would
 # find no node_modules. Git installs run npm install themselves; this covers
 # the local path. Never fatal — the bridge no-ops silently without the dep.
+# --legacy-peer-deps: pi injects its own core packages at runtime, so
+# pi-ask-user's peerDependencies (pi-coding-agent, pi-tui, typebox — ~136MB)
+# must NOT be materialized here (matches the committed .npmrc; explicit here in
+# case npm's cwd isn't $plugin_root and it misses that file).
 # Test seam mirroring TALLY_PI: override the npm binary, or TALLY_NPM=- to skip.
 npm_bin="${TALLY_NPM:-npm}"
 if [ "$npm_bin" != "-" ] && [ -f "$plugin_root/package.json" ] && [ ! -d "$plugin_root/node_modules/pi-ask-user" ] && command -v "$npm_bin" >/dev/null 2>&1; then
-  if "$npm_bin" install --omit=dev --prefix "$plugin_root" >/dev/null 2>&1; then
+  if "$npm_bin" install --omit=dev --legacy-peer-deps --prefix "$plugin_root" >/dev/null 2>&1; then
     echo "tally: installed pi runtime dependencies -> $plugin_root/node_modules"
   else
     echo "tally: could not install pi runtime dependencies. Run:" >&2
-    echo "  $npm_bin install --omit=dev --prefix \"$plugin_root\"" >&2
+    echo "  $npm_bin install --omit=dev --legacy-peer-deps --prefix \"$plugin_root\"" >&2
   fi
 elif [ "$npm_bin" != "-" ] && [ -f "$plugin_root/package.json" ] && [ ! -d "$plugin_root/node_modules/pi-ask-user" ]; then
   echo "tally: npm not found; pi runtime dependency was not installed. Run:" >&2

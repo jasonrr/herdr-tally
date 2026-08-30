@@ -76,8 +76,8 @@ reset_logs() {
 reset_logs
 PATH="$work/bin:/usr/bin:/bin" sh "$script" >/dev/null 2>"$work/err.log"; rc=$?
 check "case A exit 0" "$rc" "0"
-addcount=$(grep -c "install --omit=dev --prefix" "$work/npm.log" 2>/dev/null || echo 0)
-check "case A npm invoked with install --omit=dev --prefix" "$addcount" "1"
+addcount=$(grep -c "install --omit=dev --legacy-peer-deps --prefix" "$work/npm.log" 2>/dev/null || echo 0)
+check "case A npm invoked with install --omit=dev --legacy-peer-deps --prefix" "$addcount" "1"
 npm_line=$(grep -n "^npm " "$work/calls.log" | head -n1 | cut -d: -f1)
 pi_line=$(grep -n "^pi " "$work/calls.log" | head -n1 | cut -d: -f1)
 if [ -n "${npm_line:-}" ] && [ -n "${pi_line:-}" ] && [ "$npm_line" -lt "$pi_line" ]; then
