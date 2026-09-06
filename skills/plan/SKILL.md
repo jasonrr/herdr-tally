@@ -15,7 +15,7 @@ Author the plan as a **`plan:<slug>` scratchpad** (`scratchpad_write`, tag `plan
 
 ## Research before tasks
 
-Dispatch one Explore subagent before writing any task: for each major task area, find the nearest existing in-repo pattern to follow; skim `learnings`- and `build-log:`-tagged tally scratchpads for prior art and past failures. Cite what you follow in the plan ("follows the pattern in src/…"). A novel approach where a pattern exists, uncited, is a plan defect.
+Dispatch one Explore subagent before writing any task: for each major task area, find the nearest existing in-repo pattern to follow; skim `learnings`- and `build-log:`-tagged tally scratchpads for prior art and past failures. Cite what you follow in the plan ("follows the pattern in src/…"). A novel approach where a pattern exists, uncited, is a plan defect. A fact verified for one harness, tool, or caller does not transfer to another — each named consumer of a config key or interface needs its own citation.
 
 ## Tasks
 
@@ -33,7 +33,12 @@ Create one tally todo per task, tagged `plan:<slug>`, body pointing at the scrat
 
 ## Before handing off
 
-First reread the plan yourself for placeholders and interface mismatches. Then dispatch one fresh `sonnet` subagent whose only input is the plan scratchpad id: "You are the zero-context implementer. List every place you would have to guess — missing file paths, undefined interfaces, placeholder steps, decisions the plan assumes you know." Every guess it returns is a plan defect: fix it before creating the tally todos.
+First reread the plan yourself for placeholders and interface mismatches. Then dispatch **two** fresh `sonnet` subagents in parallel, each given only the plan scratchpad id. Every finding either returns is a plan defect — fix them all before creating the tally todos.
+
+1. **Ambiguity (zero-context implementer):** "List every place you would have to guess — missing file paths, undefined interfaces, placeholder steps, decisions the plan assumes you know."
+2. **Correctness/invariants (adversary):** brief it with the repo's lens charters from `.claude/tally-dev-loop.md` when present, else correctness + invariants. "This plan is confident and may be confidently wrong. For each task: name every documented invariant the task touches, and trace one concrete failure sequence — state/input → wrong behavior — through the plan's own code. Review the plan's code as shipped code; the implementer will transcribe it verbatim." Severity definitions and the probe-log rule are /tally:review-branch's: zero findings is legal only with a probe log naming which invariants were checked per task.
+
+The ambiguity pass cannot find a plan that is unambiguous and wrong, and that is where the expensive defects live — a design error in the plan's own code reaches the implementer as an instruction not to deviate.
 
 Then hand off to the build:
 
