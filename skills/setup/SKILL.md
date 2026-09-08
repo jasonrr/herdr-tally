@@ -9,7 +9,7 @@ You are configuring, never assuming. This skill writes exactly one file — `.cl
 
 ## 1. Current state
 
-If `.claude/tally-dev-loop.md` already exists, show it and ask what to change — routing on/off, lens edits — then apply just that and stop. The full flow below is for first-time setup.
+If `.claude/tally-dev-loop.md` already exists, show it and ask what to change — routing on/off, builder model, lens edits — then apply just that and stop. A file written before the `builder-model` key existed simply lacks it; offer to add it. The full flow below is for first-time setup.
 
 ## 2. Routing — ask first
 
@@ -27,16 +27,33 @@ Show the user this exact rule — the block the hook injects (kept in sync with 
 
 And the mechanism in one sentence: the tally plugin's SessionStart hook emits this into every session in this repo, only while this file says `routing: on`; deleting the file or setting `routing: off` disarms it. Then ask: enable routing? Decline → the file gets `routing: off`; they can still want lenses.
 
-## 3. Reviewer lenses — scan, propose, confirm
+## 3. Builder model — set the default
+
+`/tally:plan` dispatches a build controller into its own pane. Launched bare, a Claude-kind
+agent takes its model from the user's global `~/.claude/settings.json`, so the controller lands
+on whatever tier that names — usually the most expensive one. The controller only dispatches,
+verifies and adjudicates; the plan already pins a model per task for the implementers who do
+the work.
+
+Ask (one AskUserQuestion) which model build controllers should default to: `opus` (recommended
+default), `sonnet` (right when plans pin every task to sonnet or haiku), or `fable`. Write the
+answer as `builder-model: <value>`.
+
+Say what the key is, in one line: it is the **default offered at dispatch, not a lock** —
+`/tally:plan` shows it prefilled and the human can override it per build. Only Claude- and
+Pi-kind panes consume it; other agent kinds launch bare, as today.
+
+## 4. Reviewer lenses — scan, propose, confirm
 
 Read the repo before proposing: CLAUDE.md (especially invariants / gotchas / "do not fix" sections), migration dirs or persisted formats, auth and input-parsing surfaces, protocol surfaces (MCP, APIs), UI/TUI code. Propose 2–4 lenses, one line each — `name: charter`, where the charter says what to attack and what counts as p1 for that lens. Always include `correctness` and `simplicity` (simplicity findings cap at p2). Add an `invariants` lens whenever the repo documents frozen contracts — its charter IS that list, compressed. Confirm with AskUserQuestion (multiSelect, user can edit via Other).
 
-## 4. Write and recap
+## 5. Write and recap
 
 Show the complete file content, get one final yes, then write `.claude/tally-dev-loop.md`:
 
     # dev loop
     routing: on
+    builder-model: opus
 
     ## Lenses
     - correctness: ...
