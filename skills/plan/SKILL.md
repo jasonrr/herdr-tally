@@ -42,8 +42,63 @@ The ambiguity pass cannot find a plan that is unambiguous and wrong, and that is
 
 Then hand off to the build:
 
-- **In herdr (`HERDR_ENV=1`):** one AskUserQuestion — dispatch to a new worktree / build inline here / defer.
-  - **Dispatch:** preserve the caller's CLI/model family instead of accepting the worktree's default agent. Before creating it, read the current kind from `herdr agent get "$HERDR_PANE_ID"` at `.result.agent.agent`; for Pi also retain `PI_PROVIDER` + `PI_MODEL`. Run `herdr worktree create --cwd <repo-root> --branch <type>/<slug> --label "<title>" --no-focus`; read `.result.root_pane.pane_id` (workspace at `.result.workspace_id`, checkout at `.result.worktree.path`). Always exit its auto-launched agent with `herdr agent send-keys <pane-id> ctrl+d`, confirm the pane is back at a shell, then `herdr agent start build-<slug> --kind <caller-kind> --pane <pane-id>`; when the caller is Pi, require non-empty `PI_PROVIDER` + `PI_MODEL` and append `-- --provider "$PI_PROVIDER" --model "$PI_MODEL"`. Then `herdr agent prompt <pane-id> "<brief>"` with a self-contained brief: repo path (the worktree checkout), branch, the `plan:<slug>` scratchpad **id**, the whole-feature verify command, and one instruction — "run /tally:build for `plan:<slug>` through completion." Build owns the rest (materialize the plan file, implement task-by-task, open the PR, run review-branch, push fixes). No session history in the brief. Then **step back** — say so; the space's agent owns it and talks to the user directly. Don't `herdr agent wait` on it or mirror the pane; progress rides the tally todos + `build-log:<slug>` scratchpad.
+- **In herdr (`HERDR_ENV=1`):** one AskUserQuestion carrying two questions. First: dispatch to a new worktree / build inline here / defer. Second, "builder model?" — offer the repo's configured default first, with `(default)` in its label, then the other two of `opus` / `sonnet` / `fable`. Read the default from `.claude/tally-dev-loop.md` (`grep '^builder-model:'`), falling back to `opus` when the key or the file is absent. One prompt, two questions — never a second round trip. The model answer applies only to the Dispatch branch; on Inline or Defer, ignore it.
+  - **Dispatch:** preserve the caller's CLI *family*; take the model from the answer to the builder-model question above, never from the caller's session. Before creating the worktree, read the current kind from `herdr agent get "$HERDR_PANE_ID"` at `.result.agent.agent`; for Pi also retain `PI_PROVIDER` + `PI_MODEL`. Run `herdr worktree create --cwd <repo-root> --branch <type>/<slug> --label "<title>" --no-focus`; read `.result.root_pane.pane_id` (workspace at `.result.workspace_id`, checkout at `.result.worktree.path`). Always exit its auto-launched agent with `herdr agent send-keys <pane-id> ctrl+d`, confirm the pane is back at a shell, then `herdr agent start build-<slug> --kind <caller-kind> --pane <pane-id>`, appending an agent-arg tail chosen by kind: **claude** → `-- --model <chosen-builder-model>`; **pi** → `-- --provider "$PI_PROVIDER" --model "$PI_MODEL"`, requiring both non-empty; **any other kind** → no tail, it launches bare as today. `herdr agent start` accepts the tail after `--` (`[-- [AGENT_ARG]...]`, verified live against herdr 0.9.0). Then `herdr agent prompt <pane-id> "<brief>"` with a self-contained brief: repo path (the worktree checkout), branch, the `plan:<slug>` scratchpad **id**, the whole-feature verify command, and one instruction — "run /tally:build for `plan:<slug>` through completion." Build owns the rest (materialize the plan file, implement task-by-task, open the PR, run review-branch, push fixes). No session history in the brief. The brief also carries the return address and report line from **Dispatch contract** below — a dispatch without one is the bug this contract exists to prevent. Then write the `dispatch-log` line (below) and **step back** — say so; the space's agent owns it and talks to the user directly. Don't `herdr agent wait` on it or mirror the pane; progress rides the tally todos + `build-log:<slug>` scratchpad until the child reports.
   - **Inline:** proceed to /tally:build in this session.
   - **Defer:** stop; the `plan:<slug>` scratchpad + todos persist for later.
 - **Outside herdr:** `EnterWorktree`, then /tally:build inline.
+
+## Dispatch contract
+
+A dispatched build is fire-and-**report**, not fire-and-forget. You still never poll it: no
+`herdr agent wait`, no reading its pane to mirror progress. The child pushes exactly once, at
+its final exit. (The worktree-dispatch design rejected *the dispatcher pulling*; this is *the
+child pushing*. Don't "fix" it back to silence.)
+
+**Put a return address and the exact report line in the brief.** Append to the dispatch brief,
+substituting your own `$HERDR_PANE_ID` for `<dispatcher-pane-id>`:
+
+    Report back when you finish, on every exit path — done, blocked awaiting the operator,
+    stopped by a stop condition, or abandoned. Your last action is:
+    herdr agent prompt <dispatcher-pane-id> "<slug>: <done|blocked|failed> — PR #<n> <url> | suite <N> OK | parked: <ids or none> | needs human: <one line or none>"
+
+Name `herdr agent prompt` specifically. It is harness-agnostic and works from a background pane,
+where `agent wait` and `tab close` can be refused by the auto-mode classifier. A Claude-kind
+child may also use its native SendMessage, but the brief names `agent prompt`.
+
+**Write the dispatch-log line before you step back.** Append one line per dispatch to a
+`dispatch-log`-tagged tally scratchpad (create it if missing): slug, worktree pane id, workspace
+id, worktree path, sent-at, expected report. This is what a resumed or compacted session reads
+to know what is still outstanding — the same job `build-log:<slug>` does for tasks inside a
+build. Written after stepping back it is too late; a compaction in between loses the dispatch.
+
+**When a report arrives, four things in order:**
+
+1. **Verify the claim.** A report is a claim, not evidence — the same rule build applies to its
+   implementers. Check the PR (`gh pr view <n> --json state,mergedAt,statusCheckRollup`) and, if
+   it claims merged, that `main` actually contains it.
+2. **Append the outcome** to `dispatch-log`: what arrived, what you verified.
+3. **Clean up the space you opened** — the rule below.
+4. **Tell the user, in one line.** They asked for the work; the report is not for you alone.
+
+**Cleanup rule — destructive, read it before running anything.** You opened the worktree
+workspace, so you close it — but only once the branch is merged or explicitly abandoned, and
+only the workspace *you* created for this slug (its id is in your `dispatch-log` line). Never
+close a workspace you did not open. Never close on a `blocked` report: the operator may still
+need that pane, and treat `failed` the same as `blocked` unless the human says the branch is
+abandoned. Order: confirm merged or abandoned → confirm the checkout is clean
+(`git -C <worktree-path> status --porcelain` empty, and no unpushed commits) →
+`herdr worktree remove --workspace <workspace-id>` → `herdr workspace close <workspace-id>`
+if it is still open. Remove the checkout **before** closing the workspace: `worktree remove`
+takes no path, only `--workspace <ID>`, so once the workspace is closed there is no handle
+left to name the checkout and it orphans on disk. `herdr workspace close` takes a workspace
+id and nothing else — both verified live against herdr 0.9.0. Its release notes mention a
+`--group` flag for closing a primary workspace together with its worktree children; that flag is NOT in the
+0.9.0 CLI. Passing it is read as the workspace id and fails with `workspace_not_found`. Close
+the child workspace by id; never reach for a group flag. If anything is ambiguous, leave the
+space open and say so. An orphaned pane is cheap; a closed pane holding unpushed work is not.
+
+
+**If a report never arrives,** you may schedule exactly one non-blocking check per dispatch — a
+Monitor on the pane's agent status, or a wakeup sized to the plan's expected duration. Never a
+blocking `herdr agent wait`, never reading the pane to mirror progress.

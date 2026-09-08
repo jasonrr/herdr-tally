@@ -24,8 +24,20 @@ Input: the `plan:<slug>` scratchpad **id** (from your dispatch brief) and its `p
    - Stop conditions: the live code contradicts the brief, verification fails twice after a fix attempt, or the work needs files outside those named — report back rather than improvise.
 4. **Verify yourself.** Run the task's verification command and read the diff. The subagent's report is a claim, not evidence.
 5. **Review.** Dispatch a fresh reviewer subagent (`sonnet`) with the diff, the task brief, and the severity definitions from /tally:review-branch (p1 = data loss, invariant violation, security, mainline breakage; p2 = edge wrongness, missing I/O error handling; p3 = hygiene) — plus the lens charters from `.claude/tally-dev-loop.md` if it exists. Every finding must be a concrete failure scenario (input/state → wrong behavior); verify each to CONFIRMED (reproduced/traced) or PLAUSIBLE (couldn't refute), and drop a finding only by showing it's wrong. Fix rounds go back to the implementer, capped at 3; past the cap you adjudicate each open finding yourself — fix it, or park it with a ruling recorded as a tally comment on the todo. Nothing is dropped silently.
-6. **Record.** `todo_complete`, plus one ledger line in a `build-log:<slug>` scratchpad: commits, deviations from plan, parked findings. Files survive context compaction — the ledger is what stops a resumed session from re-dispatching finished work.
+6. **Record.** `todo_complete`, plus one ledger line in a `build-log:<slug>` scratchpad: commits, deviations from plan, parked findings. Files survive context compaction — the ledger is what stops a resumed session from re-dispatching finished work. **If the task surprised you** — a plan defect, a tool or classifier refusal, a verify command that could not pass at this task, a finding you had to park — also append one `pattern → consequence` line to the `learnings`-tagged scratchpad (create it if missing), under a dated heading for this work: `## <slug> (PR #<n>, YYYY-MM-DD)`, preceded by a blank line if one isn't already there, one bullet per line. The PR doesn't exist yet mid-build — write `PR #pending` and reuse that one heading for every surprise in this build; review-branch fills the number in. Append bare bullets and they run into the previous section's last bullet. The build-log says what happened here; learnings says what the next planner should not repeat.
 
 One implementer at a time; parallel implementers on one tree conflict.
 
 When every task is complete, open a PR (`gh pr create`, let gh detect the remote), then run /tally:review-branch against it. Review fixes land on the PR as follow-up commits.
+
+**Last action: report to your dispatcher.** If your brief named a dispatcher pane, your final act
+on **every** exit path — all tasks done, blocked awaiting the operator, stopped by a stop
+condition, or abandoned — is the one-line report the brief specified:
+
+    herdr agent prompt <dispatcher-pane-id> "<slug>: <done|blocked|failed> — PR #<n> <url> | suite <N> OK | parked: <ids or none> | needs human: <one line or none>"
+
+Send it once, last, after the PR and review-branch — **once total**, not once per skill: if
+/tally:review-branch already sent a `blocked` report when it stopped at its gate, that was the
+report, and you send nothing more. Exiting without any report is the failure this contract
+exists to prevent: a silent exit looks exactly like a build still running. If your brief named
+no dispatcher pane you were invoked directly — no report, everything else unchanged.
