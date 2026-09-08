@@ -36,6 +36,8 @@ condition, or abandoned — is the one-line report the brief specified:
 
     herdr agent prompt <dispatcher-pane-id> "<slug>: <done|blocked|failed> — PR #<n> <url> | suite <N> OK | parked: <ids or none> | needs human: <one line or none>"
 
-Send it once, last, after the PR and review-branch. Exiting without it is the failure this
-contract exists to prevent: a silent exit looks exactly like a build still running. If your brief
-named no dispatcher pane you were invoked directly — no report, everything else unchanged.
+Send it once, last, after the PR and review-branch — **once total**, not once per skill: if
+/tally:review-branch already sent a `blocked` report when it stopped at its gate, that was the
+report, and you send nothing more. Exiting without any report is the failure this contract
+exists to prevent: a silent exit looks exactly like a build still running. If your brief named
+no dispatcher pane you were invoked directly — no report, everything else unchanged.

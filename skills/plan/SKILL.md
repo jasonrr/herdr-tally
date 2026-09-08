@@ -88,10 +88,12 @@ close a workspace you did not open. Never close on a `blocked` report: the opera
 need that pane, and treat `failed` the same as `blocked` unless the human says the branch is
 abandoned. Order: confirm merged or abandoned → confirm the checkout is clean
 (`git -C <worktree-path> status --porcelain` empty, and no unpushed commits) →
-`herdr workspace close <workspace-id>` →
-`herdr worktree remove` for the checkout. `herdr workspace close` takes a workspace id and
-nothing else — verified live against herdr 0.9.0. Its release notes mention a `--group` flag
-for closing a primary workspace together with its worktree children; that flag is NOT in the
+`herdr worktree remove --workspace <workspace-id>` → `herdr workspace close <workspace-id>`
+if it is still open. Remove the checkout **before** closing the workspace: `worktree remove`
+takes no path, only `--workspace <ID>`, so once the workspace is closed there is no handle
+left to name the checkout and it orphans on disk. `herdr workspace close` takes a workspace
+id and nothing else — both verified live against herdr 0.9.0. Its release notes mention a
+`--group` flag for closing a primary workspace together with its worktree children; that flag is NOT in the
 0.9.0 CLI. Passing it is read as the workspace id and fails with `workspace_not_found`. Close
 the child workspace by id; never reach for a group flag. If anything is ambiguous, leave the
 space open and say so. An orphaned pane is cheap; a closed pane holding unpushed work is not.
