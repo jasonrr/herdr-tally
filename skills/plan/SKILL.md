@@ -85,7 +85,10 @@ build. Written after stepping back it is too late; a compaction in between loses
 workspace, so you close it — but only once the branch is merged or explicitly abandoned, and
 only the workspace *you* created for this slug (its id is in your `dispatch-log` line). Never
 close a workspace you did not open. Never close on a `blocked` report: the operator may still
-need that pane. Order: confirm merged or abandoned → `herdr workspace close <workspace-id>` →
+need that pane, and treat `failed` the same as `blocked` unless the human says the branch is
+abandoned. Order: confirm merged or abandoned → confirm the checkout is clean
+(`git -C <worktree-path> status --porcelain` empty, and no unpushed commits) →
+`herdr workspace close <workspace-id>` →
 `herdr worktree remove` for the checkout. `herdr workspace close` takes a workspace id and
 nothing else — verified live against herdr 0.9.0. Its release notes mention a `--group` flag
 for closing a primary workspace together with its worktree children; that flag is NOT in the
