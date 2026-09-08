@@ -27,4 +27,4 @@ State it: "X is the root cause because Y." Make the smallest change that tests i
 - Fix too big for inline (architectural, multi-file): take the diagnosis to /tally:plan — the root-cause writeup is the design input.
 - Genuinely environmental/external (rare — most "no root cause" is incomplete investigation): document what you ruled out in a tally scratchpad, add handling (retry, timeout, clear error) and logging for next time.
 
-Follow-ups the investigation turns up go to tally todos, not into this fix. When the root cause would surprise the next session, append one line to a `learnings`-tagged tally scratchpad — `pattern → consequence` (create the scratchpad if missing).
+Follow-ups the investigation turns up go to tally todos, not into this fix. When the root cause would surprise the next session, append one line to a `learnings`-tagged tally scratchpad — `pattern → consequence` (create the scratchpad if missing), under a dated heading — `## <slug or short label> (YYYY-MM-DD)`, preceded by a blank line if one isn't already there, one bullet per line.
