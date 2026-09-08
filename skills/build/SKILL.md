@@ -29,3 +29,13 @@ Input: the `plan:<slug>` scratchpad **id** (from your dispatch brief) and its `p
 One implementer at a time; parallel implementers on one tree conflict.
 
 When every task is complete, open a PR (`gh pr create`, let gh detect the remote), then run /tally:review-branch against it. Review fixes land on the PR as follow-up commits.
+
+**Last action: report to your dispatcher.** If your brief named a dispatcher pane, your final act
+on **every** exit path — all tasks done, blocked awaiting the operator, stopped by a stop
+condition, or abandoned — is the one-line report the brief specified:
+
+    herdr agent prompt <dispatcher-pane-id> "<slug>: <done|blocked|failed> — PR #<n> <url> | suite <N> OK | parked: <ids or none> | needs human: <one line or none>"
+
+Send it once, last, after the PR and review-branch. Exiting without it is the failure this
+contract exists to prevent: a silent exit looks exactly like a build still running. If your brief
+named no dispatcher pane you were invoked directly — no report, everything else unchanged.
