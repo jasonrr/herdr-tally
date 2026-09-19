@@ -33,6 +33,8 @@
 - Ordering claims about a CLI need the `--help` read, not the mental model → the cleanup rule ordered `workspace close` before `worktree remove`, but `herdr worktree remove` (0.9.0) takes only `--workspace <ID>` and no path, so closing first leaves no handle and orphans the checkout on disk. Caught in branch review, not planning.
 - A plan step written as "copy this text verbatim" can still carry a p1 → two of three review findings on this branch were defects in the plan's own wording, not in the implementer's copy of it. Reviewing the diff against the plan is not the same as reviewing the plan.
 
-## durable-records (PR #pending, 2026-09-19)
+## durable-records (PR #20, 2026-09-19)
 
 - A path pattern with a date (`YYYY-MM-DD-<slug>.md`) named in two skills must say in both where the date comes from → build pinned it to the plan file basename, review-branch did not, so a review run on a later day would pick today's date, miss the real decision file, and create a duplicate. Caught in per-task review.
+- A whole-feature verify that pins exact counts on a file the build's own rules append to cannot pass once the build follows those rules → the 18-bullet / 5-heading check broke when this build logged its first learning. Pin counts on the migrated part only, or use a floor.
+- A guard added in a review fix can create the next bug → "append Deviations only if none yet" (added to stop duplicates) made a second review run drop new deviations. Ask of every guard: what does a legitimate re-run do?
