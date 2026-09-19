@@ -32,3 +32,7 @@
 - A skill that instructs a *chain* of skills must say who owns a once-only side effect → build's "send the report last" and review-branch's "send a blocked report at the gate" each read correctly alone, but a dispatched build runs both, so the happy path sent the report twice. Name the owner explicitly when two skills in one session can both fire the same action.
 - Ordering claims about a CLI need the `--help` read, not the mental model → the cleanup rule ordered `workspace close` before `worktree remove`, but `herdr worktree remove` (0.9.0) takes only `--workspace <ID>` and no path, so closing first leaves no handle and orphans the checkout on disk. Caught in branch review, not planning.
 - A plan step written as "copy this text verbatim" can still carry a p1 → two of three review findings on this branch were defects in the plan's own wording, not in the implementer's copy of it. Reviewing the diff against the plan is not the same as reviewing the plan.
+
+## durable-records (PR #pending, 2026-09-19)
+
+- A path pattern with a date (`YYYY-MM-DD-<slug>.md`) named in two skills must say in both where the date comes from → build pinned it to the plan file basename, review-branch did not, so a review run on a later day would pick today's date, miss the real decision file, and create a duplicate. Caught in per-task review.
