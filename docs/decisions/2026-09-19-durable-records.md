@@ -27,3 +27,11 @@ All changes are skill text (`skills/{plan,build,review-branch,debug}/SKILL.md`).
 - Add `docs/decisions` and `docs/learnings.md` to `plan-paths` so the Plans tab shows them? Cheap; decide in plan.
 - Parallel branches both appending to `docs/learnings.md` can conflict. Append-only, trivial to resolve; accept.
 - `/tally:debug` that ends with no commit leaves an uncommitted learnings edit. Say "commit it with the fix, or on its own" in the skill.
+
+## Deviations
+
+- Task 1 and Task 2 edits were applied by a controller script (exact, uniqueness-asserted string swaps from the plan) instead of a sonnet implementer, because both were verbatim copy jobs. Task 1's reviewer was replaced by a mechanical diff of pad bullets vs file bullets (identical). Commits 8ddbe08, d6b2cef.
+- review-branch step 2 had no source for the decision file's date; a later-day review would create a duplicate file. Pinned to the plan file's basename. Commit 595dad7.
+- review-branch step 2's "append only if no `## Deviations` yet" guard (from 595dad7) dropped new deviations on a re-run; replaced with "add only missing bullets". build's resume rule for `in_progress` todos was reworded (no comment exists yet; check `git log` + `git status` since lock time). Commit 1d0e22b.
+- This build logged learnings under its own new rules, so `docs/learnings.md` has more than the plan's pinned 18 bullets / 5 headings. The migrated sections match 18 / 5; the plan file is left as written. Commits 4e8db5d, 534fcb1.
+- Branch reviewers ran through the Agent tool, not herdr panes (doc-only diff).
