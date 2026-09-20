@@ -52,9 +52,9 @@ You keep four kinds of artifact in it:
 - **Scratchpads** — the thinking that outgrows a todo: research results, a plan
   you're about to run, a "here's where I left off" handoff.
 - **Plans** — the spec or plan you're executing against. You don't author these in
-  tally — plan mode, superpowers, ce and friends already write them to disk; tally
-  surfaces that markdown so you can read it and talk over it beside the live todos.
-  Point it at whichever dirs hold yours.
+  tally — Claude Code's native plan mode and the `/tally:plan` skill already write
+  them to disk; tally surfaces that markdown so you can read it and talk over it
+  beside the live todos. Point it at whichever dirs hold yours.
 - **Comments** — the thread that ties it together: a margin note on any todo,
   scratchpad, or plan ("skip step 3", "blocked on the auth PR"), read back across
   everything with `tally comments recent`.
@@ -101,6 +101,21 @@ It's safe to sync live: each machine writes only its own
 `automerge/<machine-hex>.automerge` snapshot, and loading merges every
 machine's file losslessly (it's a CRDT), so concurrent edits from different
 machines union rather than clobber.
+
+That union is field-level, not edit-level: if you edit the same todo's title
+(or any other scalar field — status, priority, tags) on two machines while
+offline, the merge picks one value with no conflict signal — silent
+last-writer-wins, not a prompt to resolve. The optional `expected_updated`
+guard on `update_todo` only catches sequential writes on one machine (each
+call reloads the merged doc first); it can't see an offline edit made
+elsewhere that hasn't synced yet.
+
+Rare edge case: if two machines each migrate the *same* legacy `todos.json`
+independently, before either machine's `automerge/` dir has synced to the
+other (migration only runs once, gated on that dir being absent), you can end
+up with duplicate todos after they merge. This is a deliberate tradeoff of
+per-machine migration authorship (it avoids a worse failure mode where
+divergent legacy files collide) — if it happens, just delete the duplicates.
 
 ## Install
 
