@@ -403,11 +403,19 @@ impl Project {
         expected_revision: i64,
     ) -> Result<Scratchpad> {
         let (s, _) = self.read_scratchpad(id, "full", "", 0, 0)?;
+        // Guard first: a stale expected revision is an error even when the tag
+        // set wouldn't change.
+        if expected_revision >= 0 && s.revision != expected_revision {
+            return Err(Error::RevisionMismatch);
+        }
         let mut merged = s.tags.clone();
         for t in add {
             if !merged.contains(t) {
                 merged.push(t.clone());
             }
+        }
+        if merged == s.tags {
+            return Ok(s); // nothing to add: no revision bump, no `updated` rewrite
         }
         self.update_scratchpad(id, expected_revision, None, None, Some(merged))
     }
@@ -420,7 +428,18 @@ impl Project {
         expected_revision: i64,
     ) -> Result<Scratchpad> {
         let (s, _) = self.read_scratchpad(id, "full", "", 0, 0)?;
-        let keep: Vec<String> = s.tags.into_iter().filter(|t| !drop.contains(t)).collect();
+        if expected_revision >= 0 && s.revision != expected_revision {
+            return Err(Error::RevisionMismatch);
+        }
+        let keep: Vec<String> = s
+            .tags
+            .iter()
+            .filter(|t| !drop.contains(t))
+            .cloned()
+            .collect();
+        if keep == s.tags {
+            return Ok(s); // nothing to remove: no revision bump
+        }
         self.update_scratchpad(id, expected_revision, None, None, Some(keep))
     }
 
@@ -880,6 +899,48 @@ mod tests {
             .remove_scratchpad_tags(&s.id, &["b".into(), "zzz".into()], s.revision)
             .unwrap();
         assert_eq!(s.tags, vec!["a"]);
+    }
+
+    #[test]
+    fn test_noop_tag_ops_do_not_bump_revision() {
+        let p = new_project();
+        let s = p
+            .create_scratchpad("x", "content", vec!["a".into()])
+            .unwrap();
+        // adding an already-present tag changes nothing
+        let after_add = p
+            .add_scratchpad_tags(&s.id, &["a".into()], s.revision)
+            .unwrap();
+        assert_eq!(after_add.revision, s.revision, "no-op add bumped revision");
+        assert_eq!(after_add.updated, s.updated, "no-op add rewrote updated");
+        // removing an absent tag changes nothing
+        let after_rm = p
+            .remove_scratchpad_tags(&s.id, &["zzz".into()], after_add.revision)
+            .unwrap();
+        assert_eq!(
+            after_rm.revision, s.revision,
+            "no-op remove bumped revision"
+        );
+        assert_eq!(after_rm.updated, s.updated, "no-op remove rewrote updated");
+        assert_eq!(after_rm.tags, vec!["a"]);
+    }
+
+    #[test]
+    fn test_noop_tag_ops_still_enforce_revision_guard() {
+        let p = new_project();
+        let s = p
+            .create_scratchpad("x", "content", vec!["a".into()])
+            .unwrap();
+        assert!(
+            p.add_scratchpad_tags(&s.id, &["a".into()], s.revision + 1)
+                .is_err(),
+            "stale revision must error even on a no-op add"
+        );
+        assert!(
+            p.remove_scratchpad_tags(&s.id, &["zzz".into()], s.revision + 1)
+                .is_err(),
+            "stale revision must error even on a no-op remove"
+        );
     }
 
     #[test]
