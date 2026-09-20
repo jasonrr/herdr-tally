@@ -31,6 +31,22 @@ use super::todos::TodosFile;
 /// history. See `ensure_root`.
 const GENESIS_ACTOR: [u8; 16] = [0u8; 16];
 
+#[cfg(test)]
+thread_local! {
+    /// Test-only counter of `load_doc` calls (a full read+merge of every
+    /// machine's snapshot). Pins the "one doc load per TUI reload" property.
+    pub(crate) static DOC_LOADS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Reset the counter and return the number of `load_doc` calls made while
+/// running `f`.
+#[cfg(test)]
+pub(crate) fn count_doc_loads<T>(f: impl FnOnce() -> T) -> (T, usize) {
+    DOC_LOADS.with(|c| c.set(0));
+    let out = f();
+    (out, DOC_LOADS.with(|c| c.get()))
+}
+
 #[cfg(target_os = "macos")]
 fn machine_id_bytes() -> Result<[u8; 16]> {
     let mut buf = [0u8; 16];
@@ -72,10 +88,24 @@ fn machine_id_bytes() -> Result<[u8; 16]> {
     Err(Error::Other("unsupported OS: no stable machine id".into()))
 }
 
+/// The machine id, resolved from the OS at most once per process. Only a
+/// SUCCESS is cached: a failure stays a failure on every call, so identity can
+/// never silently "become" something else, and every caller below resolves it
+/// BEFORE any mutation or write (load_doc's `our_file`, save_doc's filename),
+/// keeping the fail-closed contract — we never write under a wrong name.
+fn machine_id_cached() -> Result<[u8; 16]> {
+    static CACHE: std::sync::OnceLock<[u8; 16]> = std::sync::OnceLock::new();
+    if let Some(v) = CACHE.get() {
+        return Ok(*v);
+    }
+    let v = machine_id_bytes()?;
+    Ok(*CACHE.get_or_init(|| v))
+}
+
 impl Project {
     /// This machine's automerge actor = its hardware host UUID.
     fn machine_actor(&self) -> Result<ActorId> {
-        Ok(ActorId::from(machine_id_bytes()?))
+        Ok(ActorId::from(machine_id_cached()?))
     }
 
     /// Hex of the machine actor — the basename of this machine's owner file.
@@ -128,6 +158,8 @@ impl Project {
     /// fail loudly — silently falling back to an empty doc would then have
     /// `save_doc` clobber our own file with nothing.
     pub(crate) fn load_doc(&self) -> Result<AutoCommit> {
+        #[cfg(test)]
+        DOC_LOADS.with(|c| c.set(c.get() + 1));
         self.migrate_if_needed()?;
 
         let mut files: Vec<std::path::PathBuf> = Vec::new();
@@ -311,7 +343,7 @@ impl Project {
                 for t in &mut tf.todos {
                     t.priority = crate::store::todos::migrate_legacy_priority(&t.priority);
                 }
-                save_todos_file(&mut doc, &tf)?;
+                save_root(&mut doc, "todos", &tf)?;
                 // R4: reconcile skips `Todo.extra`, so into a FRESH doc those
                 // cross-version keys would vanish — write them explicitly.
                 preserve_todo_extras(&mut doc, &tf)?;
@@ -320,7 +352,7 @@ impl Project {
                 let bytes = std::fs::read(&comments_p)?;
                 let cf: CommentsFile = serde_json::from_slice(&bytes)
                     .map_err(|e| Error::Other(format!("migrate {}: {e}", comments_p.display())))?;
-                save_comments_file(&mut doc, &cf)?;
+                save_root(&mut doc, "comments", &cf)?;
             }
             for path in &pad_files {
                 let bytes = std::fs::read(path)?;
@@ -495,36 +527,29 @@ fn insert_json(
     Ok(())
 }
 
-/// Hydrate the `todos` root map into a `TodosFile`. `load_doc`'s `ensure_root`
-/// guarantees the key is present on a doc it produced, but guard a missing key
-/// (e.g. a doc built by hand in a test) as an empty file rather than an error.
-pub(crate) fn load_todos_file(doc: &AutoCommit) -> Result<TodosFile> {
-    if doc.get(ROOT, "todos")?.is_none() {
-        return Ok(TodosFile::default());
+/// Hydrate a root map key (`"todos"` -> `TodosFile`, `"comments"` ->
+/// `CommentsFile`). `load_doc`'s `ensure_root` guarantees the key is present on
+/// a doc it produced, but guard a missing key (e.g. a doc built by hand in a
+/// test) as the default value rather than an error.
+pub(crate) fn load_root<T: autosurgeon::Hydrate + Default>(
+    doc: &AutoCommit,
+    key: &str,
+) -> Result<T> {
+    if doc.get(ROOT, key)?.is_none() {
+        return Ok(T::default());
     }
-    Ok(hydrate_prop(doc, ROOT, "todos")?)
+    Ok(hydrate_prop(doc, ROOT, key)?)
 }
 
-/// Reconcile a `TodosFile` into the `todos` root map. Identity-keyed list
-/// reconcile (`Todo::id` is `#[key]`) means this does not prune siblings
-/// written by another machine and merged in.
-pub(crate) fn save_todos_file(doc: &mut AutoCommit, tf: &TodosFile) -> Result<()> {
-    reconcile_prop(doc, ROOT, "todos", tf)?;
-    Ok(())
-}
-
-/// Hydrate the `comments` root map into a `CommentsFile`. Same missing-key
-/// guard as `load_todos_file`.
-pub(crate) fn load_comments_file(doc: &AutoCommit) -> Result<CommentsFile> {
-    if doc.get(ROOT, "comments")?.is_none() {
-        return Ok(CommentsFile::default());
-    }
-    Ok(hydrate_prop(doc, ROOT, "comments")?)
-}
-
-/// Reconcile a `CommentsFile` into the `comments` root map.
-pub(crate) fn save_comments_file(doc: &mut AutoCommit, cf: &CommentsFile) -> Result<()> {
-    reconcile_prop(doc, ROOT, "comments", cf)?;
+/// Reconcile a value into a root map key. Identity-keyed list reconcile
+/// (`Todo::id` is `#[key]`) means this does not prune siblings written by
+/// another machine and merged in.
+pub(crate) fn save_root<T: autosurgeon::Reconcile>(
+    doc: &mut AutoCommit,
+    key: &str,
+    v: &T,
+) -> Result<()> {
+    reconcile_prop(doc, ROOT, key, v)?;
     Ok(())
 }
 
@@ -607,8 +632,8 @@ impl Project {
     /// `cat todos.json`.
     pub(crate) fn dump(&self) -> Result<StoreDump> {
         let doc = self.load_doc()?;
-        let tf = load_todos_file(&doc)?;
-        let cf = load_comments_file(&doc)?;
+        let tf: TodosFile = load_root(&doc, "todos")?;
+        let cf: CommentsFile = load_root(&doc, "comments")?;
         let mut scratchpads = Vec::new();
         for id in pad_ids(&doc)? {
             if let Some(p) = load_pad(&doc, &id)? {
@@ -898,10 +923,10 @@ mod tests {
         p.ensure_root(&mut doc).unwrap();
         doc.set_actor(ActorId::from(actor));
         let tf: TodosFile = serde_json::from_str(todos_json).unwrap();
-        save_todos_file(&mut doc, &tf).unwrap();
+        save_root(&mut doc, "todos", &tf).unwrap();
         if let Some(cj) = comments_json {
             let cf: CommentsFile = serde_json::from_str(cj).unwrap();
-            save_comments_file(&mut doc, &cf).unwrap();
+            save_root(&mut doc, "comments", &cf).unwrap();
         }
         if let Some(md) = pad_md {
             save_pad(&mut doc, &parse_pad(md.as_bytes())).unwrap();

@@ -282,23 +282,59 @@ impl TodosFile {
     }
 }
 
+/// Hydrate the todos out of an ALREADY-LOADED doc, normalizing legacy
+/// priorities. The read-path seam: `load_todos` is this plus a `load_doc`, and
+/// callers holding a doc (the TUI reload) use this to avoid re-loading it.
+pub(crate) fn todos_of(doc: &automerge::AutoCommit) -> Result<TodosFile> {
+    let mut tf: TodosFile = crate::store::amdoc::load_root(doc, "todos")?;
+    for t in &mut tf.todos {
+        t.priority = migrate_legacy_priority(&t.priority);
+    }
+    Ok(tf)
+}
+
+/// `Project::list_todos` against an already-loaded doc.
+pub(crate) fn list_todos_from(doc: &automerge::AutoCommit, f: TodoFilter) -> Result<Vec<Todo>> {
+    filter_todos(todos_of(doc)?, f)
+}
+
+/// `Project::blocked_ids` against an already-loaded doc.
+pub(crate) fn blocked_ids_from(doc: &automerge::AutoCommit) -> BTreeSet<String> {
+    match todos_of(doc) {
+        Ok(tf) => blocked_ids_of(&tf.todos),
+        Err(_) => BTreeSet::new(),
+    }
+}
+
+/// The ids of todos with at least one incomplete blocker.
+fn blocked_ids_of(all: &[Todo]) -> BTreeSet<String> {
+    let status: HashMap<&str, &str> = all
+        .iter()
+        .map(|x| (x.id.as_str(), x.status.as_str()))
+        .collect();
+    all.iter()
+        .filter(|t| {
+            !t.blockers.is_empty()
+                && t.blockers
+                    .iter()
+                    .any(|b| status.get(b.as_str()).copied() != Some("completed"))
+        })
+        .map(|t| t.id.clone())
+        .collect()
+}
+
 impl Project {
     fn load_todos(&self) -> Result<TodosFile> {
-        let doc = self.load_doc()?;
-        let mut tf = crate::store::amdoc::load_todos_file(&doc)?;
-        for t in &mut tf.todos {
-            t.priority = migrate_legacy_priority(&t.priority);
-        }
-        Ok(tf)
+        todos_of(&self.load_doc()?)
     }
 
     /// Loads, applies f, saves — all under the doc's flock.
     fn mutate_todos(&self, f: impl FnOnce(&mut TodosFile) -> Result<()>) -> Result<()> {
         self.with_doc(|doc| {
-            let mut tf = crate::store::amdoc::load_todos_file(doc)?;
+            let mut tf: TodosFile = crate::store::amdoc::load_root(doc, "todos")?;
             f(&mut tf)?;
             tf.revision += 1;
-            crate::store::amdoc::save_todos_file(doc, &tf)?;
+            crate::store::amdoc::save_root(doc, "todos", &tf)?;
             Ok(())
         })
     }
@@ -396,60 +432,54 @@ impl Project {
     /// use this instead of per-todo `is_blocked`, which re-hydrates the store on
     /// every call — O(N) full loads per render on a large store.
     pub fn blocked_ids(&self) -> BTreeSet<String> {
-        let all = match self.load_todos() {
-            Ok(tf) => tf.todos,
-            Err(_) => return BTreeSet::new(),
-        };
-        let status: HashMap<&str, &str> = all
-            .iter()
-            .map(|x| (x.id.as_str(), x.status.as_str()))
-            .collect();
-        all.iter()
-            .filter(|t| {
-                !t.blockers.is_empty()
-                    && t.blockers
-                        .iter()
-                        .any(|b| status.get(b.as_str()).copied() != Some("completed"))
-            })
-            .map(|t| t.id.clone())
-            .collect()
+        match self.load_todos() {
+            Ok(tf) => blocked_ids_of(&tf.todos),
+            Err(_) => BTreeSet::new(),
+        }
     }
 
     pub fn list_todos(&self, f: TodoFilter) -> Result<Vec<Todo>> {
-        let tf = self.load_todos()?;
-        let mut out: Vec<Todo> = Vec::new();
-        for t in &tf.todos {
-            if !f.status.is_empty() && t.status != f.status {
-                continue;
-            }
-            if let Some(want) = f.completed
-                && (t.status == "completed") != want
-            {
-                continue;
-            }
-            if !f.priority.is_empty() && t.priority != f.priority {
-                continue;
-            }
-            if let Some(want) = f.is_blocked
-                && blocked_against(t, &tf.todos) != want
-            {
-                continue;
-            }
-            if !f.query.is_empty() {
-                let hay = format!("{} {}", t.title, t.body).to_lowercase();
-                if !hay.contains(&f.query.to_lowercase()) {
-                    continue;
-                }
-            }
-            if !f.tags.is_empty() && !has_all_tags(&t.tags, &f.tags) {
-                continue;
-            }
-            out.push(t.clone());
-        }
-        sort_todos(&mut out, &f.sort);
-        Ok(page(out, f.offset, f.limit))
+        filter_todos(self.load_todos()?, f)
     }
+}
 
+/// Filter + sort + page an already-hydrated `TodosFile` — the body of
+/// `list_todos`, shared with `list_todos_from`.
+fn filter_todos(tf: TodosFile, f: TodoFilter) -> Result<Vec<Todo>> {
+    let mut out: Vec<Todo> = Vec::new();
+    for t in &tf.todos {
+        if !f.status.is_empty() && t.status != f.status {
+            continue;
+        }
+        if let Some(want) = f.completed
+            && (t.status == "completed") != want
+        {
+            continue;
+        }
+        if !f.priority.is_empty() && t.priority != f.priority {
+            continue;
+        }
+        if let Some(want) = f.is_blocked
+            && blocked_against(t, &tf.todos) != want
+        {
+            continue;
+        }
+        if !f.query.is_empty() {
+            let hay = format!("{} {}", t.title, t.body).to_lowercase();
+            if !hay.contains(&f.query.to_lowercase()) {
+                continue;
+            }
+        }
+        if !f.tags.is_empty() && !has_all_tags(&t.tags, &f.tags) {
+            continue;
+        }
+        out.push(t.clone());
+    }
+    sort_todos(&mut out, &f.sort);
+    Ok(page(out, f.offset, f.limit))
+}
+
+impl Project {
     pub fn update_todo(&self, id: &str, u: TodoUpdate) -> Result<Todo> {
         self.edit_todo_raw(id, |t| {
             if let Some(exp) = &u.expected_updated
@@ -1036,7 +1066,7 @@ mod tests {
                     ..Default::default()
                 }],
             };
-            crate::store::amdoc::save_todos_file(d, &tf)
+            crate::store::amdoc::save_root(d, "todos", &tf)
         })
         .unwrap();
         let t = p.get_todo("t_legacy").unwrap();

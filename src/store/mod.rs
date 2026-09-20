@@ -42,6 +42,17 @@ pub(crate) mod am_skip {
     }
 }
 
+// Read-only seams that take an ALREADY-LOADED doc, so a caller needing several
+// views of the store (the TUI's 2s reload) pays for one `load_doc` instead of
+// one per call. The `Project` methods above delegate to these.
+pub(crate) use amdoc::load_pad;
+pub(crate) use comments::{comment_counts_from, list_comments_from};
+pub(crate) use scratchpads::list_scratchpads_from;
+pub(crate) use todos::{blocked_ids_from, list_todos_from};
+
+#[cfg(test)]
+pub(crate) use amdoc::count_doc_loads;
+
 pub use comments::{Comment, CommentSummary};
 pub use errors::{Error, Result};
 pub use project::{
