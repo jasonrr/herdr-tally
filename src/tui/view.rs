@@ -722,6 +722,14 @@ fn card_theme(title: &'static str, focused: bool) -> EditorTheme<'static> {
     theme
 }
 
+/// Soft wrap in the edit cards is `EditorView::wrap(true)` — set on every
+/// editor we render (title, body, comment input). Note the limit: edtui's
+/// `LineWrapper` breaks at the column, NOT at a word boundary, so a long line
+/// continues mid-word on the next row. Verified identical in edtui 0.11.3 and
+/// 0.11.7 (`src/view/line_wrapper.rs` is byte-for-byte the same, no word-break
+/// option anywhere in the crate). Fixing it properly means word-aware wrapping
+/// upstream in edtui — a local wrapper can't work, because the cursor/selection
+/// geometry is computed from the same splitter.
 fn draw_edit(app: &mut App, f: &mut Frame, area: Rect) {
     let show_meta = app.tab == Tab::Todos;
     // A not-yet-saved todo has no id to hold blockers; count is 0 there.
@@ -1203,6 +1211,47 @@ mod tests {
         let deep = dump(&mut app);
         assert!(deep.contains("L100"), "scroll moves the viewport down");
         assert!(!deep.contains("L000"), "top rows gone once scrolled down");
+    }
+
+    /// Edit mode must soft-wrap: a body line far wider than the pane has to keep
+    /// rendering on the rows below, not run off the right edge. The tail marker
+    /// is only reachable if `EditorView::wrap(true)` is in effect.
+    ///
+    /// Caveat this test does NOT assert: edtui wraps at the column, not at a word
+    /// boundary (see the note on `draw_edit`).
+    #[test]
+    fn edit_body_soft_wraps_long_lines() {
+        let root = TempDir::new();
+        let repo = git_repo();
+        let p = resolve_project_in(root.path(), Some(&repo.path().to_string_lossy())).unwrap();
+        let mut app = App::new(p, Tab::Scratchpads);
+        let body = format!("{} ENDMARK", "x".repeat(120));
+        app.p.create_scratchpad("Pad", &body, vec![]).unwrap();
+        app.reload();
+        app.begin_edit();
+        assert_eq!(app.mode, Mode::Edit, "editor should have opened");
+
+        let backend = ratatui::backend::TestBackend::new(40, 20);
+        let mut term = ratatui::Terminal::new(backend).unwrap();
+        term.draw(|f| draw(&mut app, f)).unwrap();
+        let buf = term.backend().buffer().clone();
+        let mut rows: Vec<String> = Vec::new();
+        for y in 0..buf.area().height {
+            let mut s = String::new();
+            for x in 0..buf.area().width {
+                s.push_str(buf.cell((x, y)).unwrap().symbol());
+            }
+            rows.push(s);
+        }
+        let screen = rows.join("\n");
+        assert!(
+            screen.contains("ENDMARK"),
+            "long line did not wrap onto following rows:\n{screen}"
+        );
+        // and it landed on a later row than where the line started
+        let first = rows.iter().position(|r| r.contains("xxxx")).unwrap();
+        let mark = rows.iter().position(|r| r.contains("ENDMARK")).unwrap();
+        assert!(mark > first, "wrap produced no second row:\n{screen}");
     }
 
     #[test]
