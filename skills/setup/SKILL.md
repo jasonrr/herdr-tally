@@ -5,7 +5,7 @@ description: One-time, consent-gated setup of the tally dev loop for this repo �
 
 # Setup
 
-You are configuring, never assuming. This skill writes exactly one file — `.claude/tally-dev-loop.md` at the repo root — and only after the user approves its exact content. Never touch `.claude/settings.json`, global config, or anything else. Every question is one AskUserQuestion.
+You are configuring, never assuming. This skill writes exactly one file — `.claude/tally-dev-loop.md` at the repo root — and only after the user approves its exact content. Never touch `.claude/settings.json`, global config, or anything else. Ask every question of the user (use AskUserQuestion when available).
 
 ## 1. Current state
 
@@ -35,7 +35,7 @@ on whatever tier that names — usually the most expensive one. The controller o
 verifies and adjudicates; the plan already pins a model per task for the implementers who do
 the work.
 
-Ask (one AskUserQuestion) which model build controllers should default to: `opus` (recommended
+Ask (use AskUserQuestion when available) which model build controllers should default to: `opus` (recommended
 default), `sonnet` (right when plans pin every task to sonnet or haiku), or `fable`. Write the
 answer as `builder-model: <value>`.
 
@@ -45,7 +45,7 @@ Pi-kind panes consume it; other agent kinds launch bare, as today.
 
 ## 4. Reviewer lenses — scan, propose, confirm
 
-Read the repo before proposing: CLAUDE.md (especially invariants / gotchas / "do not fix" sections), migration dirs or persisted formats, auth and input-parsing surfaces, protocol surfaces (MCP, APIs), UI/TUI code. Propose 2–4 lenses, one line each — `name: charter`, where the charter says what to attack and what counts as p1 for that lens. Always include `correctness` and `simplicity` (simplicity findings cap at p2). Add an `invariants` lens whenever the repo documents frozen contracts — its charter IS that list, compressed. Confirm with AskUserQuestion (multiSelect, user can edit via Other).
+Read the repo before proposing: CLAUDE.md (especially invariants / gotchas / "do not fix" sections), migration dirs or persisted formats, auth and input-parsing surfaces, protocol surfaces (MCP, APIs), UI/TUI code. Propose 2–4 lenses, one line each — `name: charter`, where the charter says what to attack and what counts as p1 for that lens. Always include `correctness` and `simplicity` (simplicity findings cap at p2). Add an `invariants` lens whenever the repo documents frozen contracts — its charter IS that list, compressed. Confirm with the user (AskUserQuestion multiSelect when available, user can edit via Other).
 
 ## 5. Write and recap
 
@@ -62,7 +62,7 @@ Show the complete file content, get one final yes, then write `.claude/tally-dev
 
 Recap in three lines: what was written and where; that `rm .claude/tally-dev-loop.md` (or `routing: off`) undoes everything; that the tally TUI footer now reflects this state.
 
-Then ask (one AskUserQuestion) whether to gitignore or commit the file:
+Then ask (use AskUserQuestion when available) whether to gitignore or commit the file:
 
 - **Gitignore (default)** — add `.claude/tally-dev-loop.md` to `.gitignore`. The loop stays personal to this checkout. This is the safe default because committing it means every teammate who *also* has the tally plugin gets the `<dev-loop>` block injected into their sessions on clone — arming routing for them without their own consent, which is exactly what the rest of this setup is careful to ask about first. (For a purely local ignore that doesn't touch a shared `.gitignore`, use `.git/info/exclude` instead.)
 - **Commit** — the whole team shares one loop. Choose this only when everyone works in this repo with the tally plugin and wants the same routing + lenses. Teammates without the plugin just see inert markdown.
