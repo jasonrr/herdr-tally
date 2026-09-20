@@ -1720,6 +1720,12 @@ Expected: FAIL — `--github` undefined flag / `github` arg absent.
 
 - [ ] **Step 3: Implement the CLI flag**
 
+> **Note (post-implementation):** the snippet below validates `--github`
+> *after* applying field updates. The shipped code (commit `bb05ca8`) validates
+> it up front instead, so a bad `--github` value can't half-apply field edits —
+> see `src/cli/todos.rs`'s `"update"` arm. The code is authoritative; this
+> snippet is left as originally planned for history.
+
 In `src/cli/todos.rs`, add `"github"` to `VALUE_FLAGS` (after `"blocker"`). Read it alongside the other flags:
 ```rust
     let github = p.str("github", "");
