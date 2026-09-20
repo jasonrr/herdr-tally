@@ -4,6 +4,8 @@
 // revision-bumping atomic write, and a per-file flock. No revision guard — a
 // comment never mutates a target body, so the flock is the only ceiling.
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
@@ -225,24 +227,54 @@ impl Project {
         })
     }
 
-    /// A comment target that is a plan path (not a `t_`/`s_` id) whose file no
-    /// longer exists under the project root — the comment has orphaned.
-    fn is_orphan_plan_target(&self, target: &str) -> bool {
+    /// A comment target that is a plan path (not a `t_`/`s_` id) whose file
+    /// exists under NONE of `roots` — the comment has truly orphaned. `self.path`
+    /// (passed to `resolve_project`) is always the MAIN checkout root, but
+    /// worktrees share one store, so a plan file that only exists in a linked
+    /// worktree must not be treated as missing.
+    fn is_orphan_plan_target(target: &str, roots: &[PathBuf]) -> bool {
         !target.starts_with("t_")
             && !target.starts_with("s_")
             && !target.is_empty()
-            && !self.path.join(target).exists()
+            && !roots.iter().any(|r| r.join(target).exists())
     }
 
-    /// Drop every comment whose plan-path target no longer exists. Todo and
-    /// scratchpad comments are untouched (their deletion cascades already).
-    /// `dry_run` reports the count without writing. Returns how many matched.
+    /// Every worktree root for this project's repo, via `git worktree list
+    /// --porcelain` run with cwd = `self.path` (the main checkout — worktrees
+    /// share one store). Falls back to `[self.path]` if git fails or this
+    /// isn't a git repo at all.
+    fn worktree_roots(&self) -> Vec<PathBuf> {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&self.path)
+            .args(["worktree", "list", "--porcelain"])
+            .output();
+        let roots: Vec<PathBuf> = match out {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+                .lines()
+                .filter_map(|l| l.strip_prefix("worktree "))
+                .map(PathBuf::from)
+                .collect(),
+            _ => Vec::new(),
+        };
+        if roots.is_empty() {
+            vec![self.path.clone()]
+        } else {
+            roots
+        }
+    }
+
+    /// Drop every comment whose plan-path target no longer exists in ANY of
+    /// the repo's worktrees. Todo and scratchpad comments are untouched
+    /// (their deletion cascades already). `dry_run` reports the count without
+    /// writing. Returns how many matched.
     pub fn prune_plan_comments(&self, dry_run: bool) -> Result<usize> {
+        let roots = self.worktree_roots();
         let orphans: Vec<String> = self
             .load_comments()?
             .comments
             .iter()
-            .filter(|c| self.is_orphan_plan_target(&c.target))
+            .filter(|c| Self::is_orphan_plan_target(&c.target, &roots))
             .map(|c| c.id.clone())
             .collect();
         if !orphans.is_empty() && !dry_run {
@@ -454,6 +486,75 @@ mod tests {
         assert_eq!(tp.list_comments(&s.id).unwrap().len(), 1);
         // nothing left to prune
         assert_eq!(tp.prune_plan_comments(false).unwrap(), 0);
+    }
+
+    // A plan file that exists only in a linked worktree (the normal dev-loop
+    // flow: build runs in a `.claude/worktrees/<slug>` checkout) must not be
+    // pruned just because it's invisible from the MAIN checkout root that
+    // `self.path` always resolves to.
+    #[test]
+    fn test_prune_plan_comments_checks_all_worktrees() {
+        if Command::new("git").arg("--version").output().is_err() {
+            eprintln!("skipping: git not on PATH");
+            return;
+        }
+        let tp = new_project();
+        let main = &tp.p.path;
+
+        // an initial commit so `git worktree add` has something to check out
+        for args in [
+            vec!["add", "-A"],
+            vec![
+                "-c",
+                "user.email=t@example.com",
+                "-c",
+                "user.name=t",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+        ] {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(main)
+                .args(&args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+
+        let wt_parent = crate::store::testutil::TempDir::new();
+        let wt = wt_parent.path().join("wt");
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(main)
+            .args(["worktree", "add", &wt.to_string_lossy()])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "worktree add: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+
+        // plan file exists ONLY in the linked worktree, not the main checkout
+        std::fs::write(wt.join("plan.md"), "# plan").unwrap();
+        assert!(!main.join("plan.md").exists());
+        tp.add_comment("plan.md", "", "in the worktree").unwrap();
+
+        // prune must NOT drop it — the file is visible from a worktree
+        assert_eq!(tp.prune_plan_comments(false).unwrap(), 0);
+        assert_eq!(tp.list_comments("plan.md").unwrap().len(), 1);
+
+        // remove the file everywhere -> now it's a real orphan
+        std::fs::remove_file(wt.join("plan.md")).unwrap();
+        assert_eq!(tp.prune_plan_comments(false).unwrap(), 1);
+        assert!(tp.list_comments("plan.md").unwrap().is_empty());
     }
 
     #[test]

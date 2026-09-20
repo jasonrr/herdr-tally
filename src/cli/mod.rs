@@ -463,6 +463,27 @@ mod tests {
             got.body, "line1\nline2\nline3",
             "rejected update must not apply"
         );
+
+        // --append-body and --append-body-file together must error, not
+        // silently drop --append-body (body_from prefers the file).
+        assert_ne!(
+            cli.todos(&[
+                "update",
+                &id,
+                "--append-body",
+                "dropped",
+                "--append-body-file",
+                &f.to_string_lossy(),
+            ])
+            .0,
+            0
+        );
+        let (_, out) = cli.todos(&["get", &id, "--json"]);
+        let got: crate::store::Todo = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            got.body, "line1\nline2\nline3",
+            "rejected update must not apply"
+        );
     }
 
     #[test]
