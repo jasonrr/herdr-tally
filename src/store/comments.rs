@@ -231,6 +231,35 @@ impl Project {
         })
     }
 
+    /// A comment target that is a plan path (not a `t_`/`s_` id) whose file no
+    /// longer exists under the project root — the comment has orphaned.
+    fn is_orphan_plan_target(&self, target: &str) -> bool {
+        !target.starts_with("t_")
+            && !target.starts_with("s_")
+            && !target.is_empty()
+            && !self.path.join(target).exists()
+    }
+
+    /// Drop every comment whose plan-path target no longer exists. Todo and
+    /// scratchpad comments are untouched (their deletion cascades already).
+    /// `dry_run` reports the count without writing. Returns how many matched.
+    pub fn prune_plan_comments(&self, dry_run: bool) -> Result<usize> {
+        let orphans: Vec<String> = self
+            .load_comments()?
+            .comments
+            .iter()
+            .filter(|c| self.is_orphan_plan_target(&c.target))
+            .map(|c| c.id.clone())
+            .collect();
+        if !orphans.is_empty() && !dry_run {
+            self.mutate_comments(|cf| {
+                cf.comments.retain(|c| !orphans.contains(&c.id));
+                Ok(())
+            })?;
+        }
+        Ok(orphans.len())
+    }
+
     /// Cascade helper: drop every comment on a deleted target.
     pub(crate) fn delete_comments_for_target(&self, target: &str) -> Result<()> {
         let target = norm_target(target);
@@ -390,6 +419,31 @@ mod tests {
         tp.delete_comments_for_target("s_pad").unwrap();
         assert!(tp.list_comments("s_pad").unwrap().is_empty());
         assert_eq!(tp.list_comments("t_x").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_prune_plan_comments_drops_only_missing_plans() {
+        let tp = new_project();
+        std::fs::create_dir_all(tp.p.path.join("docs")).unwrap();
+        std::fs::write(tp.p.path.join("docs/here.md"), "# here").unwrap();
+        tp.add_comment("docs/here.md", "", "kept").unwrap();
+        tp.add_comment("docs/gone.md", "", "orphan").unwrap();
+        let t = tp.create_todo("x", "", "", Vec::new()).unwrap();
+        tp.add_comment(&t.id, "", "todo note").unwrap();
+        let s = tp.create_scratchpad("pad", "# p", Vec::new()).unwrap();
+        tp.add_comment(&s.id, "", "pad note").unwrap();
+
+        // dry run reports without writing
+        assert_eq!(tp.prune_plan_comments(true).unwrap(), 1);
+        assert_eq!(tp.list_comments("docs/gone.md").unwrap().len(), 1);
+
+        assert_eq!(tp.prune_plan_comments(false).unwrap(), 1);
+        assert!(tp.list_comments("docs/gone.md").unwrap().is_empty());
+        assert_eq!(tp.list_comments("docs/here.md").unwrap().len(), 1);
+        assert_eq!(tp.list_comments(&t.id).unwrap().len(), 1);
+        assert_eq!(tp.list_comments(&s.id).unwrap().len(), 1);
+        // nothing left to prune
+        assert_eq!(tp.prune_plan_comments(false).unwrap(), 0);
     }
 
     #[test]

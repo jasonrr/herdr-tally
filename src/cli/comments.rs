@@ -7,7 +7,7 @@ use super::render;
 use super::{fail, parse, print_json, project_opt, resolve};
 use crate::store::{Comment, CommentSummary};
 
-const BOOL_FLAGS: &[&str] = &["json", "include-events"];
+const BOOL_FLAGS: &[&str] = &["json", "include-events", "dry-run"];
 const VALUE_FLAGS: &[&str] = &["project", "body", "section", "since", "author"];
 const INT_FLAGS: &[&str] = &[];
 /// All three subcommands take a leading positional (target, or comment id).
@@ -15,7 +15,7 @@ const ID_TAKING: &[&str] = &["add", "list", "delete"];
 
 pub(crate) fn run(args: &[String], store_root: Option<&Path>, out: &mut dyn Write) -> i32 {
     if args.is_empty() {
-        return fail("usage: tally comments <add|list|delete|recent|targets>");
+        return fail("usage: tally comments <add|list|delete|recent|targets|prune>");
     }
     let sub = args[0].as_str();
     let rest = &args[1..];
@@ -38,6 +38,7 @@ pub(crate) fn run(args: &[String], store_root: Option<&Path>, out: &mut dyn Writ
     let since = p.str("since", "24h");
     let author = p.str("author", "");
     let include_events = p.boolean("include-events", false);
+    let dry_run = p.boolean("dry-run", false);
 
     let proj = match resolve(project_opt(&project), store_root) {
         Ok(p) => p,
@@ -127,6 +128,13 @@ pub(crate) fn run(args: &[String], store_root: Option<&Path>, out: &mut dyn Writ
                         .collect();
                     let _ = render::render_comment_summaries(out, &rows);
                 }
+            }
+            Err(e) => return fail(&e.to_string()),
+        },
+        "prune" => match proj.prune_plan_comments(dry_run) {
+            Ok(n) => {
+                let verb = if dry_run { "would remove" } else { "removed" };
+                let _ = writeln!(out, "{verb} {n} orphaned plan comment(s)");
             }
             Err(e) => return fail(&e.to_string()),
         },
