@@ -38,3 +38,9 @@
 - A path pattern with a date (`YYYY-MM-DD-<slug>.md`) named in two skills must say in both where the date comes from → build pinned it to the plan file basename, review-branch did not, so a review run on a later day would pick today's date, miss the real decision file, and create a duplicate. Caught in per-task review.
 - A whole-feature verify that pins exact counts on a file the build's own rules append to cannot pass once the build follows those rules → the 18-bullet / 5-heading check broke when this build logged its first learning. Pin counts on the migrated part only, or use a floor.
 - A guard added in a review fix can create the next bug → "append Deviations only if none yet" (added to stop duplicates) made a second review run drop new deviations. Ask of every guard: what does a legitimate re-run do?
+
+## todo-sweep (PR #22, 2026-09-20)
+
+- A store check that joins a rel_path onto `Project.path` sees only the MAIN checkout (worktrees share one store) → `comments prune` deleted live comments on a plan file that existed only in a feature worktree. Any "does this file still exist" test must ask every root in `git worktree list`.
+- A path taken from argv and written into a symlink must be canonicalized first → a relative target resolves against the symlink's own directory, not the caller's cwd, and `store link ./sync` bricked the store. Temp-dir tests never catch it because their paths are always absolute.
+- The rtk `git` → `rtk git` rewrite is unreadable to the worktree-isolation guard → every git call in an `EnterWorktree` session is refused, and subagents quietly switch to `/usr/bin/git`. Fix the hook to skip `.claude/worktrees/`, or approve `/usr/bin/git` up front.

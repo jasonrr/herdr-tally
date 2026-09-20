@@ -143,6 +143,11 @@ pub fn link_store(root: &Path, target: &Path) -> Result<PathBuf> {
             target.display()
         )));
     }
+    // A relative target string (e.g. "./sync") would otherwise be written
+    // verbatim into the symlink, which resolves it relative to the symlink's
+    // OWN directory, not the caller's cwd — silently bricking the store.
+    // Canonicalize so the symlink always points at an absolute, `..`-free path.
+    let target = target.canonicalize()?;
     if let Ok(dest) = std::fs::read_link(root) {
         return Err(Error::Other(format!(
             "store root {} is already a symlink to {} — nothing to do",
@@ -302,7 +307,9 @@ mod tests {
 
         let target = TempDir::new();
         let dest = link_store(&root, target.path()).unwrap();
-        assert_eq!(dest, target.path().join("tally"));
+        // dest is canonicalized (e.g. macOS /var -> /private/var), so compare
+        // against the canonical form of the target, not its literal path.
+        assert_eq!(dest, target.path().canonicalize().unwrap().join("tally"));
         assert_eq!(std::fs::read_link(&root).unwrap(), dest);
         assert!(dest.join("projects").is_dir(), "data not moved");
 
@@ -348,6 +355,52 @@ mod tests {
         let err = link_store(&root, target.path()).unwrap_err().to_string();
         assert!(err.contains("refusing to clobber"), "err: {err}");
         assert!(root.join("projects").is_dir(), "root must be untouched");
+    }
+
+    // `tally store link ./sync` (a relative target) must not write a relative
+    // dest into the symlink — resolved relative to the symlink's OWN dir, not
+    // the cwd, that would brick the store. Build a relative-looking path with
+    // `..` (no process-wide chdir, since tests run in parallel) and assert the
+    // written symlink target is absolute and `..`-free, plus data survives.
+    #[test]
+    fn test_link_store_canonicalizes_relative_target() {
+        let root_parent = TempDir::new();
+        let root = root_parent.path().join("tally");
+        let repo = git_repo();
+        let p = resolve_project_in(&root, Some(&repo.path().to_string_lossy())).unwrap();
+        let t = p
+            .create_todo("Survives a relative link", "", "", Vec::new())
+            .unwrap();
+
+        let target_parent = TempDir::new();
+        let real_target = target_parent.path().join("sync");
+        std::fs::create_dir_all(&real_target).unwrap();
+        // <abs-temp>/sync/sibling/../  == <abs-temp>/sync, but as a string it
+        // contains ".." and is not the canonical form.
+        std::fs::create_dir_all(real_target.join("sibling")).unwrap();
+        let relative_ish = real_target.join("sibling").join("..");
+
+        let dest = link_store(&root, &relative_ish).unwrap();
+        assert_eq!(dest, real_target.canonicalize().unwrap().join("tally"));
+
+        let link_target = std::fs::read_link(&root).unwrap();
+        assert!(
+            link_target.is_absolute(),
+            "symlink target must be absolute: {}",
+            link_target.display()
+        );
+        assert!(
+            !link_target.components().any(|c| c.as_os_str() == ".."),
+            "symlink target must not contain '..': {}",
+            link_target.display()
+        );
+
+        // still readable through the link
+        let p2 = resolve_project_in(&root, Some(&repo.path().to_string_lossy())).unwrap();
+        assert_eq!(
+            p2.get_todo(&t.id).unwrap().title,
+            "Survives a relative link"
+        );
     }
 
     #[test]

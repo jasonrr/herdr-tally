@@ -146,6 +146,9 @@ pub(crate) fn run(args: &[String], store_root: Option<&Path>, out: &mut dyn Writ
                     "--append-body/--append-body-file cannot be combined with --body/--body-file",
                 );
             }
+            if p.was_set("append-body") && p.was_set("append-body-file") {
+                return fail("--append-body cannot be combined with --append-body-file");
+            }
             let b = match body_from(&body, &body_file) {
                 Ok(b) => b,
                 Err(e) => return fail(&e.to_string()),
