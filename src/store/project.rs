@@ -178,7 +178,11 @@ pub fn link_store(root: &Path, target: &Path) -> Result<PathBuf> {
     if let Some(parent) = root.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::os::unix::fs::symlink(&dest, root)?;
+    if let Err(e) = std::os::unix::fs::symlink(&dest, root) {
+        // Never leave the store moved but unlinked: put it back.
+        let _ = std::fs::rename(&dest, root);
+        return Err(e.into());
+    }
     Ok(dest)
 }
 
