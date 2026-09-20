@@ -10,7 +10,7 @@ Goal: an approved design the size of the problem. No code, scaffolding, or file 
 ## Process
 
 1. Ground yourself in the code first. Read the relevant areas; delegate broad scans to an Explore subagent and keep the judgment here.
-2. Ask one question at a time. Use AskUserQuestion with concrete options when the choice is discrete. Stop asking when the next answer wouldn't change the design.
+2. Ask one question at a time, with concrete options when the choice is discrete (use AskUserQuestion when available). Stop asking when the next answer wouldn't change the design.
 3. Propose 2–3 approaches with a stated recommendation and what each trades away. If only one sane approach exists, say so and skip the menu.
 4. Apply the cut test to every element: "what breaks if we don't build this?" No concrete answer means cut it, and say what was cut. Prefer the version that ships less.
 5. For any UI/TUI change, present ASCII mockups with realistic data and get sign-off on a mockup, not on prose.
