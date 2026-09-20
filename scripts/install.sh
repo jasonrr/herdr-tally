@@ -115,16 +115,21 @@ fi
 # pi is MCP-averse — no server to add. Instead install this repo as a pi package
 # so pi sessions discover the tally skills + routing extension. User-global (no
 # -l) so every project's pi sees it. Never fatal.
+# git-source install (not a local-path install): the repo is public and ships a
+# committed package.json with a `pi` key, so `pi install <path>` would otherwise
+# mint a fresh cache entry per plugin-root path (one per herdr version/worktree),
+# leaving stale `pi list` entries behind. The git: form dedupes to one entry.
 # Test-injection seam mirroring TALLY_BIN/TALLY_FETCH_OR_BUILD above: override the
 # `pi` binary, or set TALLY_PI=- to skip this phase entirely (hermetic tests would
 # otherwise touch the real, global `pi install` state).
 pi_bin="${TALLY_PI:-pi}"
+pi_source="git:github.com/jasonrr/herdr-tally"
 if [ "$pi_bin" != "-" ] && command -v "$pi_bin" >/dev/null 2>&1; then
-  if "$pi_bin" install "$plugin_root" >/dev/null 2>&1; then
-    echo "tally: registered pi package -> $plugin_root"
+  if "$pi_bin" install "$pi_source" >/dev/null 2>&1; then
+    echo "tally: registered pi package -> $pi_source"
   else
     echo "tally: could not register pi package automatically. Run:" >&2
-    echo "  $pi_bin install \"$plugin_root\"" >&2
+    echo "  $pi_bin install \"$pi_source\"" >&2
   fi
 fi
 
