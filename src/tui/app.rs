@@ -15,7 +15,7 @@ use edtui::{EditorEventHandler, EditorMode, EditorState, Lines};
 use ratatui::text::{Line, Text};
 
 use crate::plans::{self, Plan};
-use crate::store::{Project, Scratchpad, Todo, TodoFilter, TodoUpdate};
+use crate::store::{Comment, Project, Scratchpad, Todo, TodoFilter, TodoUpdate};
 
 use super::markdown;
 use super::view::{Hits, MetaSeg};
@@ -50,6 +50,9 @@ pub enum Mode {
     /// Two-step add-comment: pick an anchor, then type the note.
     CommentAnchor,
     CommentInput,
+    /// Pick-then-confirm delete of one comment on the item being read. Operates
+    /// on an id snapshot taken at entry so the 2s reload can't move the target.
+    CommentDelete,
     /// Batch-edit a todo's blockers via checkboxes; committed in one call on Enter.
     BlockerPick,
 }
@@ -135,6 +138,18 @@ pub struct App {
     pub comment_target: String,
     pub comment_ed: EditorState,
     pub comment_handler: EditorEventHandler,
+
+    // delete-comment flow
+    /// Snapshot of the target's comments taken when the picker opens. The list
+    /// is NOT refreshed while the picker is up: the background reload runs every
+    /// 2s and an agent can append or remove a note mid-pick, which would slide
+    /// the highlighted row onto a different comment between the keypress and the
+    /// confirm. The delete is issued against `comment_del[sel].id`, never an
+    /// index into the live store.
+    pub comment_del: Vec<Comment>,
+    pub comment_del_sel: usize,
+    /// Second step: the selected row is armed and awaiting y/n.
+    pub comment_del_confirm: bool,
 
     // blocker-pick flow
     /// Id of the todo whose blockers are being edited.
@@ -327,6 +342,9 @@ impl App {
             comment_target: String::new(),
             comment_ed: new_editor("", false),
             comment_handler: EditorEventHandler::emacs_mode(),
+            comment_del: Vec::new(),
+            comment_del_sel: 0,
+            comment_del_confirm: false,
             blocker_target: String::new(),
             blocker_opts: Vec::new(),
             blocker_sel: 0,
@@ -626,6 +644,79 @@ impl App {
         self.comment_handler.on_key_event(k, &mut self.comment_ed);
     }
 
+    /// Open the delete-comment picker for the current read target. Snapshots the
+    /// comment list up front — see `App::comment_del`.
+    pub fn begin_comment_delete(&mut self) {
+        let target = self.read_target();
+        if target.is_empty() {
+            return;
+        }
+        let comments = self.p.list_comments(&target).unwrap_or_default();
+        if comments.is_empty() {
+            self.status = "no comments to delete".to_string();
+            return;
+        }
+        self.comment_target = target;
+        self.comment_del = comments;
+        self.comment_del_sel = 0;
+        self.comment_del_confirm = false;
+        self.mode = Mode::CommentDelete;
+    }
+
+    fn key_comment_delete(&mut self, k: KeyEvent) {
+        let n = self.comment_del.len();
+        if n == 0 {
+            self.mode = Mode::Read;
+            return;
+        }
+        match k.code {
+            // Esc backs out one step: first the arm, then the whole picker.
+            KeyCode::Esc | KeyCode::Char('q') => {
+                if self.comment_del_confirm {
+                    self.comment_del_confirm = false;
+                } else {
+                    self.mode = Mode::Read;
+                }
+            }
+            KeyCode::Char('n') if self.comment_del_confirm => self.comment_del_confirm = false,
+            KeyCode::Char('y') if self.comment_del_confirm => self.delete_selected_comment(),
+            KeyCode::Char('j') | KeyCode::Down => {
+                self.comment_del_confirm = false; // moving disarms
+                self.comment_del_sel = (self.comment_del_sel + 1) % n;
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                self.comment_del_confirm = false;
+                self.comment_del_sel = (self.comment_del_sel + n - 1) % n;
+            }
+            KeyCode::Enter | KeyCode::Char('d') => self.comment_del_confirm = true,
+            _ => {}
+        }
+    }
+
+    /// Delete the snapshotted comment under the cursor — by id, so a concurrent
+    /// append/removal can't redirect it at another note.
+    fn delete_selected_comment(&mut self) {
+        self.comment_del_confirm = false;
+        let Some(c) = self.comment_del.get(self.comment_del_sel) else {
+            return;
+        };
+        let id = c.id.clone();
+        match self.p.delete_comment(&id) {
+            Ok(()) => self.status.clear(),
+            // Already gone (an agent beat us to it) is not worth a scary message,
+            // but the row still leaves the snapshot below.
+            Err(e) => self.status = format!("delete failed: {e}"),
+        }
+        self.comment_del.retain(|c| c.id != id);
+        if self.comment_del.is_empty() {
+            self.mode = Mode::Read;
+        } else if self.comment_del_sel >= self.comment_del.len() {
+            self.comment_del_sel = self.comment_del.len() - 1;
+        }
+        self.rebuild_read_text();
+        self.reload(); // refresh the 💬 badge count
+    }
+
     fn save_comment(&mut self) {
         let text = editor_text(&self.comment_ed);
         if text.trim().is_empty() {
@@ -655,6 +746,7 @@ impl App {
             Mode::Help => self.key_help(k),
             Mode::CommentAnchor => self.key_comment_anchor(k),
             Mode::CommentInput => self.key_comment_input(k),
+            Mode::CommentDelete => self.key_comment_delete(k),
             Mode::BlockerPick => self.key_blocker_pick(k),
         }
     }
@@ -741,6 +833,7 @@ impl App {
             KeyCode::Char('G') if self.tab == Tab::Todos => self.toggle_github(),
             KeyCode::Char('e') | KeyCode::Enter if self.tab != Tab::Plans => self.begin_edit(),
             KeyCode::Char('C') => self.begin_comment(),
+            KeyCode::Char('D') => self.begin_comment_delete(),
             KeyCode::Char('y') => self.yank(),
             KeyCode::Char('Y') => self.yank_content(),
             // body scrolling (clamped against the rendered height at draw time)
@@ -942,6 +1035,16 @@ impl App {
             Mode::Read => {
                 if self.tab == Tab::Todos && !self.meta_click(m.column, m.row) {
                     self.blockers_row_click(m.column, m.row);
+                }
+            }
+            Mode::CommentDelete => {
+                // Click selects (and disarms); it never deletes — the confirm
+                // step stays a deliberate keypress.
+                if let Some(i) = self.hits.comment_del_row_at(m.column, m.row)
+                    && i < self.comment_del.len()
+                {
+                    self.comment_del_sel = i;
+                    self.comment_del_confirm = false;
                 }
             }
             Mode::Edit => {
@@ -1650,6 +1753,96 @@ mod tests {
         )
         .unwrap();
         assert_eq!(devloop_status(dir.path()), Some((true, 2)));
+    }
+
+    /// The whole point of the delete-comment picker: the row you highlighted is
+    /// the row that gets deleted, even though the store is being rewritten under
+    /// it by the 2s reload (agents append and delete notes concurrently).
+    #[test]
+    fn comment_delete_snapshot_survives_reload() {
+        let mut f = Fixture::new(Tab::Todos);
+        f.app.p.create_todo("T", "body", "p1", vec![]).unwrap();
+        f.app.reload();
+        f.app.enter_read();
+        let target = f.app.read_target();
+        for t in ["first", "second", "third"] {
+            f.app.p.add_comment(&target, "", t).unwrap();
+        }
+
+        f.app.begin_comment_delete();
+        assert_eq!(f.app.mode, Mode::CommentDelete);
+        assert_eq!(f.app.comment_del.len(), 3);
+        f.app.on_key(key(KeyCode::Down)); // highlight "second"
+        let want = f.app.comment_del[1].clone();
+        assert_eq!(want.text, "second");
+
+        // Another writer reshuffles the live list: drop the head, append a new one.
+        let other = f.store();
+        let live = other.list_comments(&target).unwrap();
+        other.delete_comment(&live[0].id).unwrap();
+        other.add_comment(&target, "", "fourth").unwrap();
+        f.app.reload();
+
+        // Snapshot and cursor are untouched by the reload.
+        assert_eq!(f.app.comment_del.len(), 3, "snapshot must not refresh");
+        assert_eq!(f.app.comment_del_sel, 1);
+        assert_eq!(f.app.comment_del[1].id, want.id);
+
+        f.app.on_key(key(KeyCode::Enter)); // arm
+        assert!(f.app.comment_del_confirm);
+        f.app.on_key(key(KeyCode::Char('y'))); // confirm
+
+        let left = f.store().list_comments(&target).unwrap();
+        assert!(
+            !left.iter().any(|c| c.id == want.id),
+            "the snapshotted comment is the one deleted"
+        );
+        let texts: Vec<&str> = left.iter().map(|c| c.text.as_str()).collect();
+        assert_eq!(texts, vec!["third", "fourth"], "no bystander was deleted");
+        assert!(!f.app.comment_del.iter().any(|c| c.id == want.id));
+    }
+
+    /// Esc unwinds one step at a time, and a move disarms a pending confirm, so
+    /// an armed row can't be deleted by a stray `y` after the cursor moved.
+    #[test]
+    fn comment_delete_confirm_is_two_step() {
+        let mut f = Fixture::new(Tab::Todos);
+        f.app.p.create_todo("T", "body", "p1", vec![]).unwrap();
+        f.app.reload();
+        f.app.enter_read();
+        let target = f.app.read_target();
+        f.app.p.add_comment(&target, "", "a").unwrap();
+        f.app.p.add_comment(&target, "", "b").unwrap();
+        f.app.begin_comment_delete();
+
+        f.app.on_key(key(KeyCode::Char('y'))); // unarmed: does nothing
+        assert_eq!(f.store().list_comments(&target).unwrap().len(), 2);
+
+        f.app.on_key(key(KeyCode::Enter));
+        f.app.on_key(key(KeyCode::Down)); // moving disarms
+        assert!(!f.app.comment_del_confirm);
+        f.app.on_key(key(KeyCode::Char('y')));
+        assert_eq!(f.store().list_comments(&target).unwrap().len(), 2);
+
+        f.app.on_key(key(KeyCode::Enter));
+        f.app.on_key(key(KeyCode::Esc)); // esc disarms first
+        assert!(!f.app.comment_del_confirm);
+        assert_eq!(f.app.mode, Mode::CommentDelete);
+        f.app.on_key(key(KeyCode::Esc)); // then leaves the picker
+        assert_eq!(f.app.mode, Mode::Read);
+        assert_eq!(f.store().list_comments(&target).unwrap().len(), 2);
+    }
+
+    /// No comments -> the picker never opens (and says why).
+    #[test]
+    fn comment_delete_noop_without_comments() {
+        let mut f = Fixture::new(Tab::Todos);
+        f.app.p.create_todo("T", "body", "p1", vec![]).unwrap();
+        f.app.reload();
+        f.app.enter_read();
+        f.app.begin_comment_delete();
+        assert_eq!(f.app.mode, Mode::Read);
+        assert!(f.app.status.contains("no comments"));
     }
 
     fn key(code: KeyCode) -> KeyEvent {

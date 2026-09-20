@@ -87,6 +87,8 @@ pub struct Hits {
     pub blockers_row: Option<Rect>,
     /// Height of the read-mode body viewport (for page scrolling).
     pub body_h: u16,
+    /// Rows of the delete-comment picker: (area, index of the first visible row).
+    pub comment_del_rows: Option<(Rect, usize)>,
 }
 
 pub struct ListHits {
@@ -151,6 +153,15 @@ impl Hits {
         if i < l.len { Some(i) } else { None }
     }
 
+    /// Index into the delete-comment SNAPSHOT for a click, or None off the rows.
+    pub fn comment_del_row_at(&self, x: u16, y: u16) -> Option<usize> {
+        let (area, start) = self.comment_del_rows?;
+        if !area.contains(Position::new(x, y)) {
+            return None;
+        }
+        Some((y - area.y) as usize + start)
+    }
+
     pub fn meta_seg_at(&self, x: u16, y: u16) -> Option<MetaSeg> {
         let m = self.meta.as_ref()?;
         if y != m.row || x < m.x {
@@ -195,6 +206,10 @@ pub fn draw(app: &mut App, f: &mut Frame) {
         Mode::CommentInput => {
             draw_read(app, f, content);
             draw_comment_input(app, f, content);
+        }
+        Mode::CommentDelete => {
+            draw_read(app, f, content);
+            draw_comment_delete(app, f, content);
         }
         Mode::BlockerPick => {
             // the launching view stays visible behind the overlay
@@ -852,6 +867,78 @@ fn draw_comment_anchor(app: &App, f: &mut Frame, area: Rect) {
     f.render_widget(Paragraph::new(lines).block(block), popup);
 }
 
+/// One-line summary of a snapshotted comment for the delete picker.
+fn comment_row(c: &Comment) -> String {
+    let anchor = if c.section.is_empty() {
+        "(whole)".to_string()
+    } else {
+        c.section.clone()
+    };
+    let text = c.text.replace('\n', " ");
+    let kind = if c.kind == "event" { "⋯ " } else { "" };
+    format!("{kind}[{anchor}] {} · {text}", c.author)
+}
+
+/// Delete-comment picker: the snapshotted comments, selected row in reverse
+/// video, second step arms an inline y/n confirm. Draws over the read view.
+fn draw_comment_delete(app: &mut App, f: &mut Frame, area: Rect) {
+    if app.comment_del.is_empty() {
+        return;
+    }
+    let sel = app.comment_del_sel;
+    let lines: Vec<Line> = app
+        .comment_del
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let marker = if i == sel { "» " } else { "  " };
+            let l = Line::from(format!("{marker}{}", comment_row(c)));
+            if i == sel {
+                l.add_modifier(Modifier::REVERSED)
+            } else {
+                l.dim()
+            }
+        })
+        .collect();
+    let hint = if app.comment_del_confirm {
+        Line::from("delete this comment? y / n").bold()
+    } else {
+        Line::from("↑↓ pick · enter arm · esc cancel").dim()
+    };
+
+    let content_w = lines
+        .iter()
+        .chain([&hint])
+        .map(|l| l.width())
+        .max()
+        .unwrap_or(0) as u16;
+    let want_w = (content_w + 4).min(area.width);
+    // +2 borders, +2 spacer + hint row (both pinned below the scroll window)
+    let want_h = (lines.len() as u16 + 4).min(area.height);
+    let visible = want_h.saturating_sub(4) as usize;
+    let start = pick_window(sel, lines.len(), visible);
+    let mut lines: Vec<Line> = lines.into_iter().skip(start).take(visible).collect();
+    let rows = lines.len() as u16;
+    lines.push(Line::from(""));
+    lines.push(hint);
+    let x = area.x + (area.width.saturating_sub(want_w)) / 2;
+    let y = area.y + (area.height.saturating_sub(want_h)) / 2;
+    let popup = Rect::new(x, y, want_w, want_h);
+    f.render_widget(Clear, popup);
+    let block = Block::bordered()
+        .title(" Delete comment ")
+        .border_style(Style::new().fg(Color::Red))
+        .padding(Padding::horizontal(1));
+    let inner = block.inner(popup);
+    f.render_widget(Paragraph::new(lines).block(block), popup);
+    // Click parity: the rows are the click targets, mapped through the same
+    // scroll window the render used.
+    app.hits.comment_del_rows = Some((
+        Rect::new(inner.x, inner.y, inner.width, rows.min(inner.height)),
+        start,
+    ));
+}
+
 fn draw_blocker_pick(app: &App, f: &mut Frame, area: Rect) {
     let title = app
         .todos
@@ -1006,6 +1093,13 @@ fn footer(app: &App) -> &'static str {
         Mode::Help => "esc · q · ? — close",
         Mode::CommentAnchor => "j/k pick · enter select · esc cancel",
         Mode::CommentInput => "ctrl+d save · esc cancel",
+        Mode::CommentDelete => {
+            if app.comment_del_confirm {
+                "y delete this comment · n/esc keep it"
+            } else {
+                "↑↓ pick · enter arm delete · esc cancel"
+            }
+        }
         Mode::BlockerPick => "↑↓ · space toggle · enter save · esc cancel",
     }
 }
@@ -1034,6 +1128,7 @@ const HELP_ROWS: &[(&str, &str)] = &[
     ("space p e", "done · prio · edit"),
     ("b", "edit blockers (todos)"),
     ("C", "add comment (pick anchor, then type)"),
+    ("D", "delete a comment (pick, then confirm)"),
     ("y  Y  R", "copy id · copy body · raw"),
     ("ctrl+d/u", "scroll · esc back"),
     ("", ""),
@@ -1252,6 +1347,53 @@ mod tests {
         let first = rows.iter().position(|r| r.contains("xxxx")).unwrap();
         let mark = rows.iter().position(|r| r.contains("ENDMARK")).unwrap();
         assert!(mark > first, "wrap produced no second row:\n{screen}");
+    }
+
+    /// The delete-comment picker paints the selected row in reverse video and
+    /// records that row as a click target at the same coordinates.
+    #[test]
+    fn comment_delete_popup_reverses_selected_row() {
+        let root = TempDir::new();
+        let repo = git_repo();
+        let p = resolve_project_in(root.path(), Some(&repo.path().to_string_lossy())).unwrap();
+        let mut app = App::new(p, Tab::Todos);
+        app.p.create_todo("T", "body", "p1", vec![]).unwrap();
+        app.reload();
+        app.enter_read();
+        let target = app.read_target();
+        app.p.add_comment(&target, "", "alpha").unwrap();
+        app.p.add_comment(&target, "", "beta").unwrap();
+        app.begin_comment_delete();
+        app.comment_del_sel = 1;
+
+        let backend = ratatui::backend::TestBackend::new(60, 20);
+        let mut term = ratatui::Terminal::new(backend).unwrap();
+        term.draw(|f| draw(&mut app, f)).unwrap();
+        let buf = term.backend().buffer().clone();
+
+        let row_text = |y: u16| -> String {
+            (0..buf.area().width)
+                .map(|x| buf.cell((x, y)).unwrap().symbol().to_string())
+                .collect()
+        };
+        let (rows, start) = app.hits.comment_del_rows.expect("rows recorded");
+        assert_eq!(start, 0);
+        let y_alpha = rows.y;
+        let y_beta = rows.y + 1;
+        assert!(row_text(y_alpha).contains("alpha"), "{}", row_text(y_alpha));
+        assert!(row_text(y_beta).contains("beta"), "{}", row_text(y_beta));
+        let reversed = |y: u16| {
+            buf.cell((rows.x, y))
+                .unwrap()
+                .modifier
+                .contains(Modifier::REVERSED)
+        };
+        assert!(reversed(y_beta), "selected row must be reverse-video");
+        assert!(!reversed(y_alpha), "unselected row must not be");
+        // the same rows are the click targets
+        assert_eq!(app.hits.comment_del_row_at(rows.x, y_alpha), Some(0));
+        assert_eq!(app.hits.comment_del_row_at(rows.x, y_beta), Some(1));
+        assert_eq!(app.hits.comment_del_row_at(rows.x, rows.y + 5), None);
     }
 
     #[test]
