@@ -81,6 +81,7 @@ pub fn run(args: &[String]) -> ExitCode {
         );
     }
     let res = event_loop(&mut terminal, &mut a);
+    a.clear_lock_pill(); // don't leave a stale 🔒 on the pane border
     if enhanced {
         let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
     }
