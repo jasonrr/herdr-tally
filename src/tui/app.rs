@@ -187,10 +187,59 @@ pub struct App {
     /// (routing on?, lens count) from `.claude/tally-dev-loop.md`, or None when the
     /// repo hasn't run /tally:setup. Display-only.
     pub devloop: Option<(bool, usize)>,
+
+    /// Lock owner last published to herdr's pane border, so the reload only
+    /// shells out on a change. `None` = no pill currently shown.
+    pub pane_lock: Option<String>,
 }
 
 /// (routing on?, lens count) from <project>/.claude/tally-dev-loop.md, or None when
 /// the repo hasn't run /tally:setup. Display-only — the TUI never writes this.
+/// Reflect a todo lock as a pill on this pane's herdr border, or clear it with
+/// `owner = None`.
+///
+/// Verified against herdr 0.9.1: `herdr pane report-metadata <PANE_ID>
+/// --source <ID> [--token NAME=VALUE | --clear-token NAME]`. The PANE_ID is
+/// POSITIONAL AND MUST COME FIRST (options before it are read as its value),
+/// and `--state-label` is NOT usable here — it only renames one of herdr's own
+/// fixed agent states (idle/working/blocked; anything else is rejected), so a
+/// lock pill has to be a free-form token.
+///
+/// Fire-and-forget by design: no-op outside herdr, spawned and never waited on,
+/// every error swallowed. A missing/broken herdr must not stall the render loop.
+fn report_lock_pill(owner: Option<&str>) {
+    // A test must never touch the developer's own pane.
+    if cfg!(test) || std::env::var_os("HERDR_ENV").is_none() {
+        return;
+    }
+    let Some(pane) = std::env::var_os("HERDR_PANE_ID") else {
+        return;
+    };
+    let bin = std::env::var("HERDR_BIN_PATH").unwrap_or_else(|_| "/opt/homebrew/bin/herdr".into());
+    let mut cmd = Command::new(bin);
+    cmd.arg("pane")
+        .arg("report-metadata")
+        .arg(pane)
+        .arg("--source")
+        .arg("tally-tui");
+    match owner {
+        Some(o) => cmd.arg("--token").arg(format!("lock=🔒 {o}")),
+        None => cmd.arg("--clear-token").arg("lock"),
+    };
+    if let Ok(mut child) = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        // Reap off-thread: the render loop must not wait on the socket call, but
+        // an unwaited child would linger as a zombie for the session's lifetime.
+        std::thread::spawn(move || {
+            let _ = child.wait();
+        });
+    }
+}
+
 pub(crate) fn devloop_status(project_root: &std::path::Path) -> Option<(bool, usize)> {
     let text = std::fs::read_to_string(project_root.join(".claude/tally-dev-loop.md")).ok()?;
     let routing = text.split('\n').any(|l| l == "routing: on");
@@ -357,6 +406,7 @@ impl App {
             launch_inode: binary_inode(),
             stale: false,
             devloop,
+            pane_lock: None,
         };
         app.load_ui_state();
         app
@@ -451,6 +501,50 @@ impl App {
                 self.read_body = s.content;
             }
             self.rebuild_read_text();
+        }
+        self.sync_lock_pill();
+    }
+
+    /// Lock owner of the todo currently on screen (read or being edited), or
+    /// None when the TUI isn't focused on one todo. Pure — `sync_lock_pill`
+    /// does the side effect.
+    pub fn shown_lock_owner(&self) -> Option<String> {
+        if self.tab != Tab::Todos {
+            return None;
+        }
+        let id = match self.mode {
+            Mode::List | Mode::Filter | Mode::Help => return None,
+            Mode::Edit | Mode::DiscardConfirm if !self.edit_id.is_empty() => &self.edit_id,
+            Mode::Edit | Mode::DiscardConfirm => return None, // unsaved new todo
+            _ => &self.read_id,
+        };
+        if id.is_empty() {
+            return None;
+        }
+        self.todos_all
+            .iter()
+            .find(|t| t.id == *id)
+            .and_then(|t| t.lock.as_ref())
+            .map(|l| l.owner.clone())
+            .filter(|o| !o.is_empty())
+    }
+
+    /// Publish (or clear) the lock pill on this herdr pane's border when it
+    /// changes. Fire-and-forget: a failed/absent herdr must never stall the UI.
+    fn sync_lock_pill(&mut self) {
+        let want = self.shown_lock_owner();
+        if want == self.pane_lock {
+            return;
+        }
+        self.pane_lock = want.clone();
+        report_lock_pill(want.as_deref());
+    }
+
+    /// Drop the pill on the way out so a quit doesn't leave a stale 🔒 on the
+    /// pane border.
+    pub fn clear_lock_pill(&mut self) {
+        if self.pane_lock.take().is_some() {
+            report_lock_pill(None);
         }
     }
 
@@ -1843,6 +1937,38 @@ mod tests {
         f.app.begin_comment_delete();
         assert_eq!(f.app.mode, Mode::Read);
         assert!(f.app.status.contains("no comments"));
+    }
+
+    /// The pane pill mirrors the lock of the todo actually on screen, and only
+    /// while one is on screen — the list view shows many todos, so it gets none.
+    #[test]
+    fn lock_pill_tracks_the_shown_todo() {
+        let mut f = Fixture::new(Tab::Todos);
+        let locked = f.app.p.create_todo("Locked", "", "p1", vec![]).unwrap();
+        f.app.p.create_todo("Free", "", "p1", vec![]).unwrap();
+        f.app.p.lock_todo(&locked.id, "agent-a", 42).unwrap();
+        f.app.reload();
+
+        assert_eq!(f.app.shown_lock_owner(), None, "list view: no pill");
+        f.app.read_id = locked.id.clone();
+        f.app.mode = Mode::Read;
+        assert_eq!(f.app.shown_lock_owner().as_deref(), Some("agent-a"));
+
+        // sync_lock_pill latches the reported value (the spawn itself is a no-op
+        // under cfg!(test)); it only fires again on a change.
+        f.app.reload();
+        assert_eq!(f.app.pane_lock.as_deref(), Some("agent-a"));
+
+        f.app.p.unlock_todo(&locked.id, "agent-a").unwrap();
+        f.app.reload();
+        assert_eq!(f.app.shown_lock_owner(), None, "unlock clears the pill");
+        assert_eq!(f.app.pane_lock, None);
+
+        // another tab never reports a todo lock
+        f.app.p.lock_todo(&locked.id, "agent-a", 42).unwrap();
+        f.app.tab = Tab::Scratchpads;
+        f.app.reload();
+        assert_eq!(f.app.shown_lock_owner(), None);
     }
 
     fn key(code: KeyCode) -> KeyEvent {
