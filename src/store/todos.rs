@@ -484,6 +484,20 @@ impl Project {
         })
     }
 
+    /// Append `text` to a todo's body, separated by a newline. An empty body
+    /// becomes just `text`; an empty `text` is a no-op append (body unchanged,
+    /// but Updated still stamps, same as any edit).
+    pub fn append_todo_body(&self, id: &str, text: &str) -> Result<Todo> {
+        self.edit_todo_raw(id, |t| {
+            if t.body.is_empty() {
+                t.body = text.to_string();
+            } else {
+                t.body = format!("{}\n{}", t.body, text);
+            }
+            Ok(())
+        })
+    }
+
     /// Go's editTodo: find, apply f, stamp Updated, return the changed todo.
     fn edit_todo_raw(&self, id: &str, f: impl FnOnce(&mut Todo) -> Result<()>) -> Result<Todo> {
         let mut out = None;
@@ -745,6 +759,19 @@ mod tests {
         assert_eq!(td.priority, "p2");
         let got = p.get_todo(&td.id).unwrap();
         assert_eq!(got.title, "Rotate tokens");
+    }
+
+    #[test]
+    fn test_append_todo_body() {
+        let p = new_project();
+        // empty body: the appended text IS the body (no leading newline)
+        let td = p.create_todo("t", "", "", Vec::new()).unwrap();
+        let td = p.append_todo_body(&td.id, "first").unwrap();
+        assert_eq!(td.body, "first");
+        // non-empty body: separated by a single newline
+        let td = p.append_todo_body(&td.id, "second").unwrap();
+        assert_eq!(td.body, "first\nsecond");
+        assert_eq!(p.get_todo(&td.id).unwrap().body, "first\nsecond");
     }
 
     #[test]
