@@ -43,14 +43,25 @@ pub struct Lock {
 )]
 #[serde(default)]
 pub struct GithubLink {
+    /// Target repo as `owner/name` (derived from the git `origin` remote).
     #[serde(rename = "repo")]
     pub repo: String,
+    /// GitHub issue number; `0` means "not created yet" — the next sync pass
+    /// creates the issue and fills this in.
     #[serde(rename = "number")]
     pub number: i64,
+    /// Watermark (RFC 3339) of the last push of this todo's title/body/state to
+    /// GitHub. `todo.updated > last_pushed` is what makes tally win a state
+    /// conflict; empty (never pushed) sorts before any stamp, so it always wins.
     #[serde(rename = "last_pushed")]
     pub last_pushed: String,
+    /// Watermark (RFC 3339) of the last comment pull. GitHub comments created
+    /// at/after it are candidates for import; the bound is inclusive because the
+    /// known-`github_comment_id` set is the real dup guard.
     #[serde(rename = "last_comment_pull")]
     pub last_comment_pull: String,
+    /// User-set pause switch: a paused link is skipped entirely by sync (the
+    /// link and its watermarks are kept, so unpausing resumes where it stopped).
     #[serde(rename = "paused")]
     pub paused: bool,
 }
@@ -180,9 +191,27 @@ pub struct TodoUpdate {
     pub expected_updated: Option<String>,
 }
 
+// Test-only clock seam: when set, `now()` returns this instant instead of the
+// wall clock. Thread-local, so parallel tests don't see each other's pin; a
+// deliberately narrow alternative to threading a Clock through every signature.
+#[cfg(test)]
+thread_local! {
+    static TEST_NOW: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// Pin (`Some(unix_secs)`) or release (`None`) this thread's `now()`.
+#[cfg(test)]
+pub(crate) fn set_test_now(secs: Option<u64>) {
+    TEST_NOW.with(|c| c.set(secs));
+}
+
 /// RFC 3339 UTC at second precision, same shape Go's
 /// time.Now().UTC().Format(time.RFC3339) produced ("2026-07-09T18:00:00Z").
 pub(crate) fn now() -> String {
+    #[cfg(test)]
+    if let Some(secs) = TEST_NOW.with(|c| c.get()) {
+        return format_rfc3339(secs);
+    }
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
