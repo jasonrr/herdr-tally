@@ -343,14 +343,34 @@ impl Project {
         offset: i64,
         limit: i64,
     ) -> Result<Vec<Scratchpad>> {
-        // Sort ids so paging over equal Updated stamps stays deterministic
-        // (Go sorted by filename; the final sort-by-updated below is unchanged).
-        let doc = self.load_doc()?;
-        let mut ids = crate::store::amdoc::pad_ids(&doc)?;
+        list_scratchpads_from(
+            &self.load_doc()?,
+            tags,
+            query,
+            include_archived,
+            offset,
+            limit,
+        )
+    }
+}
+
+/// `Project::list_scratchpads` against an already-loaded doc.
+pub(crate) fn list_scratchpads_from(
+    doc: &automerge::AutoCommit,
+    tags: &[String],
+    query: &str,
+    include_archived: bool,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<Scratchpad>> {
+    // Sort ids so paging over equal Updated stamps stays deterministic
+    // (Go sorted by filename; the final sort-by-updated below is unchanged).
+    let mut ids = crate::store::amdoc::pad_ids(doc)?;
+    {
         ids.sort();
         let mut out = Vec::new();
         for id in &ids {
-            let Some(mut s) = crate::store::amdoc::load_pad(&doc, id)? else {
+            let Some(mut s) = crate::store::amdoc::load_pad(doc, id)? else {
                 continue;
             };
             if s.status == "archived" && !include_archived {
@@ -371,7 +391,9 @@ impl Project {
         out.sort_by(|a, b| b.updated.cmp(&a.updated));
         Ok(page(out, offset, limit))
     }
+}
 
+impl Project {
     pub fn update_scratchpad(
         &self,
         id: &str,

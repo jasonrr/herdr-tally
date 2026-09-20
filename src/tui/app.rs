@@ -15,7 +15,7 @@ use edtui::{EditorEventHandler, EditorMode, EditorState, Lines};
 use ratatui::text::{Line, Text};
 
 use crate::plans::{self, Plan};
-use crate::store::{Comment, Project, Scratchpad, Todo, TodoFilter, TodoUpdate};
+use crate::store::{self, Comment, Project, Scratchpad, Todo, TodoFilter, TodoUpdate};
 
 use super::markdown;
 use super::view::{Hits, MetaSeg};
@@ -449,39 +449,58 @@ impl App {
         } else {
             None
         };
-        match self.p.list_todos(TodoFilter {
-            sort: "priority".to_string(),
-            ..TodoFilter::default()
-        }) {
-            Ok(t) => {
-                self.todos_all = t.clone();
-                let t: Vec<Todo> = if self.hide_completed {
-                    t.into_iter().filter(|x| x.status != "completed").collect()
-                } else {
-                    t
-                };
-                self.blocked = self.p.blocked_ids().into_iter().collect();
-                self.todos = t;
-            }
-            Err(e) => self.status = format!("load failed: {e}"),
+        // ONE doc load for the whole reload: every store read below is derived
+        // from this snapshot. Each `Project` read method loads+merges the whole
+        // automerge doc on its own, so calling four of them on the 2s poll was
+        // four full loads of the same bytes.
+        let doc = self.p.load_doc();
+        if let Err(e) = &doc {
+            self.status = format!("load failed: {e}");
         }
-        match self.p.list_scratchpads(&[], "", false, 0, 0) {
-            Ok(s) => self.pads = s,
-            Err(e) => self.status = format!("load failed: {e}"),
+        if let Ok(doc) = &doc {
+            match store::list_todos_from(
+                doc,
+                TodoFilter {
+                    sort: "priority".to_string(),
+                    ..TodoFilter::default()
+                },
+            ) {
+                Ok(t) => {
+                    self.todos_all = t.clone();
+                    let t: Vec<Todo> = if self.hide_completed {
+                        t.into_iter().filter(|x| x.status != "completed").collect()
+                    } else {
+                        t
+                    };
+                    self.blocked = store::blocked_ids_from(doc).into_iter().collect();
+                    self.todos = t;
+                }
+                Err(e) => self.status = format!("load failed: {e}"),
+            }
+            match store::list_scratchpads_from(doc, &[], "", false, 0, 0) {
+                Ok(s) => self.pads = s,
+                Err(e) => self.status = format!("load failed: {e}"),
+            }
+            self.comment_counts = store::comment_counts_from(doc).unwrap_or_default();
         }
         self.plans = plans::list(&self.p.path, &plans::load_plan_paths());
-        self.comment_counts = self.p.comment_counts().unwrap_or_default();
 
-        if matches!(self.mode, Mode::Read | Mode::Edit | Mode::DiscardConfirm)
-            && !self.read_id.is_empty()
+        if matches!(
+            self.mode,
+            Mode::Read | Mode::Edit | Mode::DiscardConfirm | Mode::CommentDelete
+        ) && !self.read_id.is_empty()
         {
             let id = self.read_id.clone();
             // The viewed item can vanish from under a Read view — an agent
             // deletes it, or a spacebar-complete drops it out of the list when
             // hide_completed is on. draw_read blanks the pane when read_id no
             // longer resolves, so fall back to the list instead. Edit keeps its
-            // buffer (don't discard in-progress typing on a delete).
-            if self.mode == Mode::Read && !self.read_item_exists(&id) {
+            // buffer (don't discard in-progress typing on a delete). The
+            // delete-comment picker hangs off the same read target, so it
+            // follows Read out to the list when that target disappears —
+            // otherwise it keeps offering to delete notes on a dead item.
+            if matches!(self.mode, Mode::Read | Mode::CommentDelete) && !self.read_item_exists(&id)
+            {
                 self.mode = Mode::List;
             }
             self.pin_cursor_to(&id);
@@ -496,11 +515,16 @@ impl App {
             // ponytail: whole-file re-read on the 2s poll; diff/mtime-gate it if
             // a huge pad ever makes this visible.
             if self.tab == Tab::Scratchpads
-                && let Ok((s, _)) = self.p.read_scratchpad(&self.read_id, "full", "", 0, 0)
+                && let Ok(doc) = &doc
+                && let Ok(Some(s)) = store::load_pad(doc, &self.read_id)
             {
                 self.read_body = s.content;
             }
-            self.rebuild_read_text();
+            let comments = match &doc {
+                Ok(doc) => store::list_comments_from(doc, &self.read_target()).unwrap_or_default(),
+                Err(_) => Vec::new(),
+            };
+            self.rebuild_read_text_with(comments);
         }
         self.sync_lock_pill();
     }
@@ -745,7 +769,15 @@ impl App {
         if target.is_empty() {
             return;
         }
-        let comments = self.p.list_comments(&target).unwrap_or_default();
+        // Notes only: events are the audit trail (locks, syncs, status
+        // changes), not something a human should be able to delete from here.
+        let comments: Vec<Comment> = self
+            .p
+            .list_comments(&target)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|c| c.kind == "note")
+            .collect();
         if comments.is_empty() {
             self.status = "no comments to delete".to_string();
             return;
@@ -1525,15 +1557,21 @@ impl App {
     }
 
     pub fn rebuild_read_text(&mut self) {
+        let comments = self
+            .p
+            .list_comments(&self.read_target())
+            .unwrap_or_default();
+        self.rebuild_read_text_with(comments);
+    }
+
+    /// `rebuild_read_text` with the thread already in hand — lets `reload` reuse
+    /// its single doc snapshot instead of loading the store a second time.
+    fn rebuild_read_text_with(&mut self, comments: Vec<Comment>) {
         let mut text = if self.raw {
             Text::raw(self.read_body.clone())
         } else {
             markdown::render(&self.read_body)
         };
-        let comments = self
-            .p
-            .list_comments(&self.read_target())
-            .unwrap_or_default();
         if !comments.is_empty() {
             let headings = crate::store::parse_headings(&self.read_body);
             let now = crate::tui::time::now_unix();
@@ -1925,6 +1963,95 @@ mod tests {
         f.app.on_key(key(KeyCode::Esc)); // then leaves the picker
         assert_eq!(f.app.mode, Mode::Read);
         assert_eq!(f.store().list_comments(&target).unwrap().len(), 2);
+    }
+
+    /// The 2s poll must cost ONE full automerge load+merge, not one per store
+    /// read. Before this was wired to a single snapshot it was four (todos,
+    /// blocked ids, scratchpads, comment counts) — five in a scratchpad read
+    /// view, which re-reads the pad body.
+    #[test]
+    fn reload_loads_the_doc_once() {
+        let mut f = Fixture::new(Tab::Todos);
+        f.app.p.create_todo("T", "body", "p1", vec![]).unwrap();
+        f.app
+            .p
+            .create_scratchpad("Pad", "# Pad\n\nbody\n", vec![])
+            .unwrap();
+
+        let (_, n) = crate::store::count_doc_loads(|| f.app.reload());
+        assert_eq!(n, 1, "list reload must load the doc exactly once");
+
+        // The scratchpad read view also refreshes the shown pad body.
+        f.app.tab = Tab::Scratchpads;
+        f.app.reload();
+        f.app.enter_read();
+        assert_eq!(f.app.mode, Mode::Read);
+        let (_, n) = crate::store::count_doc_loads(|| f.app.reload());
+        assert_eq!(
+            n, 1,
+            "scratchpad read reload must load the doc exactly once"
+        );
+    }
+
+    /// Events are the audit trail — the picker offers notes only, and falls
+    /// back to Read when a target has nothing but events.
+    #[test]
+    fn comment_delete_lists_notes_only() {
+        let mut f = Fixture::new(Tab::Todos);
+        let t = f.app.p.create_todo("T", "body", "p1", vec![]).unwrap();
+        f.app.reload();
+        f.app.enter_read();
+        let target = f.app.read_target();
+        f.app
+            .p
+            .add_comment_event(&target, "locked by agent-a")
+            .unwrap();
+
+        f.app.begin_comment_delete();
+        assert_eq!(
+            f.app.mode,
+            Mode::Read,
+            "events alone must not open the picker"
+        );
+        assert!(f.app.status.contains("no comments"));
+
+        f.app.p.add_comment(&target, "", "a real note").unwrap();
+        f.app.begin_comment_delete();
+        assert_eq!(f.app.mode, Mode::CommentDelete);
+        assert_eq!(f.app.comment_del.len(), 1, "only the note is listed");
+        assert_eq!(f.app.comment_del[0].text, "a real note");
+
+        // The event is still in the store, untouched.
+        assert_eq!(
+            f.store()
+                .list_comments(&t.id)
+                .unwrap()
+                .iter()
+                .filter(|c| c.kind == "event")
+                .count(),
+            1
+        );
+    }
+
+    /// The picker hangs off the read target: if an agent deletes that todo
+    /// under it, the reload drops back to the list like Read does.
+    #[test]
+    fn comment_delete_falls_back_when_target_vanishes() {
+        let mut f = Fixture::new(Tab::Todos);
+        let t = f.app.p.create_todo("T", "body", "p1", vec![]).unwrap();
+        f.app.reload();
+        f.app.enter_read();
+        f.app.p.add_comment(&t.id, "", "note").unwrap();
+        f.app.begin_comment_delete();
+        assert_eq!(f.app.mode, Mode::CommentDelete);
+
+        f.store().delete_todo(&t.id).unwrap();
+        f.app.reload();
+        assert_eq!(
+            f.app.mode,
+            Mode::List,
+            "a vanished target must exit the picker"
+        );
     }
 
     /// No comments -> the picker never opens (and says why).

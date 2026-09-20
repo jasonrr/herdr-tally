@@ -80,14 +80,14 @@ fn is_zero(n: &i64) -> bool {
 
 impl Project {
     fn load_comments(&self) -> Result<CommentsFile> {
-        crate::store::amdoc::load_comments_file(&self.load_doc()?)
+        crate::store::amdoc::load_root(&self.load_doc()?, "comments")
     }
 
     fn mutate_comments(&self, f: impl FnOnce(&mut CommentsFile) -> Result<()>) -> Result<()> {
         self.with_doc(|doc| {
-            let mut cf = crate::store::amdoc::load_comments_file(doc)?;
+            let mut cf: CommentsFile = crate::store::amdoc::load_root(doc, "comments")?;
             f(&mut cf)?;
-            crate::store::amdoc::save_comments_file(doc, &cf)?;
+            crate::store::amdoc::save_root(doc, "comments", &cf)?;
             Ok(())
         })
     }
@@ -211,13 +211,7 @@ impl Project {
     /// All comments for a target, oldest first (creation order — appends are
     /// serialized under the file flock, so file order is chronological).
     pub fn list_comments(&self, target: &str) -> Result<Vec<Comment>> {
-        let target = norm_target(target);
-        Ok(self
-            .load_comments()?
-            .comments
-            .into_iter()
-            .filter(|c| c.target == target)
-            .collect())
+        list_comments_from(&self.load_doc()?, target)
     }
 
     pub fn delete_comment(&self, comment_id: &str) -> Result<()> {
@@ -276,18 +270,6 @@ impl Project {
             cf.comments.retain(|c| c.target != target);
             Ok(())
         })
-    }
-
-    /// target -> note count over the whole file, for TUI list badges. Events are
-    /// excluded so a toggled-status todo doesn't accrue a phantom badge.
-    pub fn comment_counts(&self) -> Result<HashMap<String, usize>> {
-        let mut m = HashMap::new();
-        for c in self.load_comments()?.comments {
-            if c.kind == "note" {
-                *m.entry(c.target).or_insert(0) += 1;
-            }
-        }
-        Ok(m)
     }
 
     /// One row per target that has notes: count + most-recent note snippet.
@@ -354,6 +336,34 @@ impl Project {
     }
 }
 
+/// `Project::list_comments` against an already-loaded doc.
+pub(crate) fn list_comments_from(
+    doc: &automerge::AutoCommit,
+    target: &str,
+) -> Result<Vec<Comment>> {
+    let target = norm_target(target);
+    let cf: CommentsFile = crate::store::amdoc::load_root(doc, "comments")?;
+    Ok(cf
+        .comments
+        .into_iter()
+        .filter(|c| c.target == target)
+        .collect())
+}
+
+/// target -> note count over the whole doc, for TUI list badges. Events are
+/// excluded so a toggled-status todo doesn't accrue a phantom badge. Takes an
+/// already-loaded doc: the TUI reload derives every view from one load.
+pub(crate) fn comment_counts_from(doc: &automerge::AutoCommit) -> Result<HashMap<String, usize>> {
+    let cf: CommentsFile = crate::store::amdoc::load_root(doc, "comments")?;
+    let mut m = HashMap::new();
+    for c in cf.comments {
+        if c.kind == "note" {
+            *m.entry(c.target).or_insert(0) += 1;
+        }
+    }
+    Ok(m)
+}
+
 /// N{s,m,h,d} -> seconds. None on any other shape.
 fn parse_window(w: &str) -> Option<u64> {
     let w = w.trim();
@@ -413,7 +423,7 @@ mod tests {
         tp.add_comment("s_pad", "Phase 1", "spike first").unwrap();
         tp.add_comment("s_pad", "", "whole-pad note").unwrap();
         tp.add_comment("t_x", "", "todo note").unwrap();
-        let counts = tp.comment_counts().unwrap();
+        let counts = comment_counts_from(&tp.load_doc().unwrap()).unwrap();
         assert_eq!(counts.get("s_pad"), Some(&2));
         assert_eq!(counts.get("t_x"), Some(&1));
         tp.delete_comments_for_target("s_pad").unwrap();
@@ -561,7 +571,7 @@ mod tests {
             text: "marked done".into(),
             github_comment_id: 0,
         });
-        tp.with_doc(|d| crate::store::amdoc::save_comments_file(d, &cf))
+        tp.with_doc(|d| crate::store::amdoc::save_root(d, "comments", &cf))
             .unwrap();
 
         // cutoff excludes the 2000 note, keeps the fresh note; events off by default
@@ -631,7 +641,7 @@ mod tests {
                 github_comment_id: 0,
             });
         }
-        tp.with_doc(|d| crate::store::amdoc::save_comments_file(d, &cf))
+        tp.with_doc(|d| crate::store::amdoc::save_root(d, "comments", &cf))
             .unwrap();
         // newest-first: the later-appended note wins the tie.
         let r = tp.recent_comments("", None, false).unwrap();
@@ -676,7 +686,7 @@ mod tests {
                 github_comment_id: 0,
             });
         }
-        tp.with_doc(|d| crate::store::amdoc::save_comments_file(d, &cf))
+        tp.with_doc(|d| crate::store::amdoc::save_root(d, "comments", &cf))
             .unwrap();
         // newest-commented target first: later file index (t_b) wins the tie.
         let sums = tp.comment_summaries().unwrap();
