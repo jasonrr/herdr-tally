@@ -514,6 +514,7 @@ fn closer_login(repo: &str, number: i64) -> Option<String> {
 mod tests {
     use super::*;
     use crate::store::testutil::new_project;
+    use crate::store::todos::{format_rfc3339, set_test_now};
     use crate::store::{Comment, GithubLink, Todo};
     use std::cell::RefCell;
 
@@ -711,6 +712,97 @@ mod tests {
                 .iter()
                 .any(|c| c.text == "please look" && c.github_comment_id == 500)
         );
+    }
+
+    /// A GH boundary that ADVANCES the pinned test clock inside `view_issue`, so
+    /// everything after the gh read happens at a strictly later "now" than the
+    /// pass start. That gap is what makes the two watermark invariants below
+    /// observable at all (the real clock is 1s-resolution and un-pinnable).
+    struct SlowGh {
+        snapshot: IssueSnapshot,
+        after: u64,
+    }
+    impl Gh for SlowGh {
+        fn auth_ok(&self) -> bool {
+            true
+        }
+        fn create_issue(&self, _: &str, _: &str, _: &str) -> crate::store::Result<i64> {
+            unreachable!("issue already exists in these tests")
+        }
+        fn edit_issue(&self, _: &str, _: i64, _: &str, _: &str) -> crate::store::Result<()> {
+            Ok(())
+        }
+        fn close_issue(&self, _: &str, _: i64) -> crate::store::Result<()> {
+            Ok(())
+        }
+        fn reopen_issue(&self, _: &str, _: i64) -> crate::store::Result<()> {
+            Ok(())
+        }
+        fn view_issue(&self, _: &str, _: i64) -> crate::store::Result<IssueSnapshot> {
+            set_test_now(Some(self.after)); // time passes while we talk to GH
+            Ok(self.snapshot.clone())
+        }
+        fn create_comment(&self, _: &str, _: i64, _: &str) -> crate::store::Result<i64> {
+            Ok(999)
+        }
+    }
+
+    /// Invariant: `pass_start` is captured BEFORE the `view_issue` call, so a GH
+    /// comment that lands mid-pass isn't buried by the watermark. If pass_start
+    /// were taken after the read, last_comment_pull would jump to T+100 and the
+    /// comment created at T+50 would never be imported.
+    #[test]
+    fn test_pass_start_precedes_gh_read() {
+        set_test_now(Some(1_000));
+        let mut tp = new_project();
+        let id = link_todo(&tp.p);
+        sync_project(&mut tp.p, &FakeGh::new(IssueSnapshot::default())); // create
+
+        set_test_now(Some(2_000));
+        let gh = SlowGh {
+            snapshot: IssueSnapshot::default(),
+            after: 2_100,
+        };
+        sync_project(&mut tp.p, &gh);
+        let link = tp.get_todo(&id).unwrap().github.unwrap();
+        assert_eq!(
+            link.last_comment_pull,
+            format_rfc3339(2_000),
+            "last_comment_pull must be the pre-read pass start, not a post-read now()"
+        );
+        set_test_now(None);
+    }
+
+    /// Invariant: after a pull-driven state change, `last_pushed` is the RE-READ
+    /// todo's `updated` (the moment complete_todo stamped), not pass_start —
+    /// otherwise the pull-bump reads as a user edit and pushes back next tick.
+    #[test]
+    fn test_pull_state_change_stamps_last_pushed_from_reread() {
+        set_test_now(Some(1_000));
+        let mut tp = new_project();
+        let id = link_todo(&tp.p);
+        sync_project(&mut tp.p, &FakeGh::new(IssueSnapshot::default())); // create
+
+        set_test_now(Some(2_000));
+        let gh = SlowGh {
+            snapshot: IssueSnapshot {
+                state: IssueState::Closed,
+                closed_by: "octocat".into(),
+                comments: vec![],
+            },
+            after: 2_100, // complete_todo therefore stamps updated = T+100
+        };
+        let rep = sync_project(&mut tp.p, &gh);
+        assert_eq!(rep.state_changes, 1);
+        let td = tp.get_todo(&id).unwrap();
+        assert_eq!(td.status, "completed");
+        assert_eq!(td.updated, format_rfc3339(2_100));
+        assert_eq!(
+            td.github.unwrap().last_pushed,
+            td.updated,
+            "last_pushed must equal the re-read todo.updated, not pass_start"
+        );
+        set_test_now(None);
     }
 
     fn linked(number: i64, last_pushed: &str, last_comment_pull: &str) -> GithubLink {

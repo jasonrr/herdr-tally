@@ -89,6 +89,88 @@ mod tests {
         }
     }
 
+    struct DeadGh;
+    impl Gh for DeadGh {
+        fn auth_ok(&self) -> bool {
+            false
+        }
+        fn create_issue(&self, _: &str, _: &str, _: &str) -> Result<i64> {
+            unreachable!()
+        }
+        fn edit_issue(&self, _: &str, _: i64, _: &str, _: &str) -> Result<()> {
+            unreachable!()
+        }
+        fn close_issue(&self, _: &str, _: i64) -> Result<()> {
+            unreachable!()
+        }
+        fn reopen_issue(&self, _: &str, _: i64) -> Result<()> {
+            unreachable!()
+        }
+        fn view_issue(&self, _: &str, _: i64) -> Result<IssueSnapshot> {
+            unreachable!()
+        }
+        fn create_comment(&self, _: &str, _: i64, _: &str) -> Result<i64> {
+            unreachable!()
+        }
+    }
+
+    /// A git repo holding one todo linked to GH, so sync has work to do and the
+    /// CLI reaches the gh-unavailable / full-summary branches.
+    fn repo_with_linked_todo(root: &TempDir) -> TempDir {
+        let repo = git_repo();
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(repo.path())
+            .args(["remote", "add", "origin", "git@github.com:o/n.git"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let p = crate::store::resolve_project_in(root.path(), Some(&repo.path().to_string_lossy()))
+            .unwrap();
+        let td = p.create_todo("issue", "body", "", Vec::new()).unwrap();
+        p.set_github(&td.id, true).unwrap();
+        repo
+    }
+
+    #[test]
+    fn sync_human_reports_gh_unavailable_with_error_lines() {
+        let root = TempDir::new();
+        let repo = repo_with_linked_todo(&root);
+        let args = vec![
+            "--project".to_string(),
+            repo.path().to_string_lossy().into_owned(),
+        ];
+        let mut buf = Vec::new();
+        let code = super::run(&args, Some(root.path()), &DeadGh, &mut buf);
+        assert_eq!(code, 0);
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("sync skipped: gh unavailable"), "{out}");
+        assert!(out.contains("  ! gh unavailable"), "{out}");
+        assert!(!out.contains("nothing to sync"), "{out}");
+    }
+
+    #[test]
+    fn sync_human_prints_full_summary_when_gh_available() {
+        let root = TempDir::new();
+        let repo = repo_with_linked_todo(&root);
+        let args = vec![
+            "--project".to_string(),
+            repo.path().to_string_lossy().into_owned(),
+        ];
+        let mut buf = Vec::new();
+        let code = super::run(&args, Some(root.path()), &OkGh, &mut buf);
+        assert_eq!(code, 0);
+        let out = String::from_utf8(buf).unwrap();
+        // First pass creates the issue and returns early: 1 checked, 1 created.
+        assert!(
+            out.contains(
+                "synced 1 todo(s): 1 created, 0 pushed, 0 state change(s), 0 comment(s) in, 0 out\n"
+            ),
+            "{out}"
+        );
+        assert!(!out.contains("error(s)"), "{out}");
+    }
+
     #[test]
     fn sync_reports_json_when_no_synced_todos() {
         let root = TempDir::new();
