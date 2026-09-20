@@ -27,7 +27,9 @@ fn default_actor() -> String {
     }
 }
 
-fn store_root() -> PathBuf {
+/// The store root: `$XDG_STATE_HOME/tally`, else `~/.local/state/tally`. The
+/// single resolver — `tally store link/status` operates on exactly this path.
+pub fn store_root() -> PathBuf {
     // Data lives under `tally/` (renamed from the original `herdr-notes/`; the live
     // dir was moved to match). The store *key* below (project_key) is unaffected —
     // it hashes the project path, not the app name — so the Go golden test still holds.
@@ -103,6 +105,81 @@ pub fn resolve_project_in(store_root: &Path, override_dir: Option<&str>) -> Resu
     };
     p.write_project_json();
     Ok(p)
+}
+
+/// exists() that does NOT follow symlinks — a dangling link still counts as
+/// "something is there", so link never clobbers.
+fn path_present(p: &Path) -> bool {
+    p.symlink_metadata().is_ok()
+}
+
+/// Describe the store root: symlinked (and where to), a plain dir, or absent.
+/// `root` is passed in so tests don't have to touch XDG_STATE_HOME.
+pub fn store_status(root: &Path) -> String {
+    match std::fs::read_link(root) {
+        Ok(t) => format!(
+            "store root: {}\n  symlink -> {}",
+            root.display(),
+            t.display()
+        ),
+        Err(_) if path_present(root) => {
+            format!(
+                "store root: {}\n  not a symlink (local directory)",
+                root.display()
+            )
+        }
+        Err(_) => format!("store root: {}\n  does not exist yet", root.display()),
+    }
+}
+
+/// Move the store root into `target` (as `<target>/tally`) and leave a symlink
+/// at the old location, so a file-sync folder holds the real data. Refuses if
+/// the root is already a symlink or `<target>/tally` exists — never clobbers.
+/// Returns the new real path.
+pub fn link_store(root: &Path, target: &Path) -> Result<PathBuf> {
+    if !target.is_dir() {
+        return Err(Error::Other(format!(
+            "target is not an existing directory: {}",
+            target.display()
+        )));
+    }
+    if let Ok(dest) = std::fs::read_link(root) {
+        return Err(Error::Other(format!(
+            "store root {} is already a symlink to {} — nothing to do",
+            root.display(),
+            dest.display()
+        )));
+    }
+    let dest = target.join("tally");
+    if path_present(&dest) {
+        return Err(Error::Other(format!(
+            "{} already exists — refusing to clobber it",
+            dest.display()
+        )));
+    }
+    if path_present(root) {
+        // Same-filesystem move only: a recursive copier is out of scope, so a
+        // cross-device rename becomes a clear do-it-by-hand error.
+        std::fs::rename(root, &dest).map_err(|e| {
+            Error::Other(format!(
+                "could not move {} to {} ({e}); if they're on different filesystems, \
+                 move it by hand (`mv {} {}`) and then `ln -s {} {}`",
+                root.display(),
+                dest.display(),
+                root.display(),
+                dest.display(),
+                dest.display(),
+                root.display()
+            ))
+        })?;
+    } else {
+        std::fs::create_dir_all(&dest)?;
+    }
+    if let Some(parent) = root.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::os::unix::fs::symlink(&dest, root)?;
+    Ok(dest)
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
@@ -205,6 +282,78 @@ mod tests {
             project_key("/Users/jasonrosoff/Code/herdr-notes"),
             "herdr-notes-d0fcfa32"
         );
+    }
+
+    // link/status take the root as an argument precisely so these can run in
+    // parallel without touching XDG_STATE_HOME.
+    #[test]
+    fn test_link_store_moves_and_symlinks() {
+        let root_parent = TempDir::new();
+        let root = root_parent.path().join("tally");
+        let repo = git_repo();
+        let p = resolve_project_in(&root, Some(&repo.path().to_string_lossy())).unwrap();
+        let t = p
+            .create_todo("Survives the move", "", "", Vec::new())
+            .unwrap();
+
+        let target = TempDir::new();
+        let dest = link_store(&root, target.path()).unwrap();
+        assert_eq!(dest, target.path().join("tally"));
+        assert_eq!(std::fs::read_link(&root).unwrap(), dest);
+        assert!(dest.join("projects").is_dir(), "data not moved");
+
+        // still readable through the link
+        let p2 = resolve_project_in(&root, Some(&repo.path().to_string_lossy())).unwrap();
+        assert_eq!(p2.get_todo(&t.id).unwrap().title, "Survives the move");
+        assert!(store_status(&root).contains("symlink ->"));
+    }
+
+    #[test]
+    fn test_link_store_creates_when_root_absent() {
+        let root_parent = TempDir::new();
+        let root = root_parent.path().join("tally");
+        assert!(store_status(&root).contains("does not exist yet"));
+        let target = TempDir::new();
+        let dest = link_store(&root, target.path()).unwrap();
+        assert!(dest.is_dir());
+        assert_eq!(std::fs::read_link(&root).unwrap(), dest);
+    }
+
+    #[test]
+    fn test_link_store_refuses_when_already_linked() {
+        let root_parent = TempDir::new();
+        let root = root_parent.path().join("tally");
+        let target = TempDir::new();
+        link_store(&root, target.path()).unwrap();
+        let other = TempDir::new();
+        let err = link_store(&root, other.path()).unwrap_err().to_string();
+        assert!(err.contains("already a symlink"), "err: {err}");
+        assert!(
+            !other.path().join("tally").exists(),
+            "second target written"
+        );
+    }
+
+    #[test]
+    fn test_link_store_refuses_when_target_exists() {
+        let root_parent = TempDir::new();
+        let root = root_parent.path().join("tally");
+        std::fs::create_dir_all(root.join("projects")).unwrap();
+        let target = TempDir::new();
+        std::fs::create_dir_all(target.path().join("tally")).unwrap();
+        let err = link_store(&root, target.path()).unwrap_err().to_string();
+        assert!(err.contains("refusing to clobber"), "err: {err}");
+        assert!(root.join("projects").is_dir(), "root must be untouched");
+    }
+
+    #[test]
+    fn test_link_store_refuses_missing_target() {
+        let root_parent = TempDir::new();
+        let root = root_parent.path().join("tally");
+        let err = link_store(&root, &root_parent.path().join("nope"))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not an existing directory"), "err: {err}");
     }
 
     fn git_available() -> bool {

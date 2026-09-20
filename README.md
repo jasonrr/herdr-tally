@@ -79,12 +79,19 @@ folder — iCloud Drive, Dropbox, Syncthing, whatever you already use. This is
 entirely optional: tally works fully local with zero sync, and it neither
 detects nor manages a sync folder for you.
 
-One-time setup, move the store and symlink it back:
+One-time setup — `tally store link` moves the store into the synced folder and
+symlinks it back:
 
 ```bash
-mv ~/.local/state/tally "$ICLOUD/tally"
-ln -s "$ICLOUD/tally" ~/.local/state/tally
+tally store link "$ICLOUD"     # -> $ICLOUD/tally, with ~/.local/state/tally -> it
+tally store status             # is the store root a symlink, and where to?
 ```
+
+It refuses to clobber: if the store root is already a symlink, or
+`<target>/tally` already exists, it stops and tells you. (The equivalent by
+hand is `mv ~/.local/state/tally "$ICLOUD/tally" && ln -s "$ICLOUD/tally"
+~/.local/state/tally` — which is also what you want if the two are on different
+filesystems, since `store link` does a plain rename.)
 
 (`~/.local/state/tally` is the default store root — `$XDG_STATE_HOME/tally` if
 you have that set.)
@@ -220,6 +227,7 @@ your agent's MCP config at `tally mcp`.
 tally todos create --title "Rotate refresh tokens" --priority p1 --tag auth   # p0 (critical) … p3 (low)
 tally todos list --status open --json
 tally todos update <id> --status in_progress
+tally todos update <id> --append-body "note to self"   # append to the body (--append-body-file f, - = stdin)
 tally todos add-blocker <id> --blocker <other-id>   # can't start until <other-id> is done
 tally todos complete <id>
 
@@ -233,6 +241,7 @@ tally comments add <id> --body "hold off — waiting on the auth PR"
 tally comments add docs/plans/auth.md --body "skip step 3, it's done"   # target a plan by its path
 tally comments recent --since 2h            # newest-first across every target (default 24h)
 tally comments targets                      # which items carry notes, with a snippet
+tally comments prune [--dry-run]            # drop comments on plan files that no longer exist
 ```
 
 Scratchpad writes take an expected revision — `read` returns the current one, you

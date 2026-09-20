@@ -16,6 +16,8 @@ const VALUE_FLAGS: &[&str] = &[
     "title",
     "body",
     "body-file",
+    "append-body",
+    "append-body-file",
     "priority",
     "status",
     "sort",
@@ -54,7 +56,7 @@ struct TodoListOut<'a> {
 pub(crate) fn run(args: &[String], store_root: Option<&Path>, out: &mut dyn Write) -> i32 {
     if args.is_empty() {
         return fail(
-            "usage: tally todos <list|get|create|update|delete|complete|incomplete|add-tag|remove-tag|set-blockers|add-blocker|remove-blocker|lock|unlock|tags>",
+            "usage: tally todos <list|get|create|update|delete|complete|incomplete|add-tag|remove-tag|set-blockers|add-blocker|remove-blocker|lock|unlock|tags>\n  update <id> [--title t] [--status s] [--priority p] [--tag x] [--github on|off]\n              [--body t|--body-file f] (replace) | [--append-body t|--append-body-file f] (append; - = stdin)",
         );
     }
     let sub = args[0].as_str();
@@ -76,6 +78,8 @@ pub(crate) fn run(args: &[String], store_root: Option<&Path>, out: &mut dyn Writ
     let title = p.str("title", "");
     let body = p.str("body", "");
     let body_file = p.str("body-file", "");
+    let append_body = p.str("append-body", "");
+    let append_body_file = p.str("append-body-file", "");
     let priority = p.str("priority", "");
     let status = p.str("status", "");
     let sort = p.str("sort", "");
@@ -134,6 +138,14 @@ pub(crate) fn run(args: &[String], store_root: Option<&Path>, out: &mut dyn Writ
             Err(e) => return fail(&e.to_string()),
         },
         "update" => {
+            // --append-body{,-file} adds to the body; --body{,-file} replaces
+            // it. Asking for both at once is a mistake, not a merge.
+            let appending = p.was_set("append-body") || p.was_set("append-body-file");
+            if appending && (p.was_set("body") || p.was_set("body-file")) {
+                return fail(
+                    "--append-body/--append-body-file cannot be combined with --body/--body-file",
+                );
+            }
             let b = match body_from(&body, &body_file) {
                 Ok(b) => b,
                 Err(e) => return fail(&e.to_string()),
@@ -182,6 +194,16 @@ pub(crate) fn run(args: &[String], store_root: Option<&Path>, out: &mut dyn Writ
             } else {
                 None
             };
+            if appending {
+                let text = match body_from(&append_body, &append_body_file) {
+                    Ok(t) => t,
+                    Err(e) => return fail(&e.to_string()),
+                };
+                match proj.append_todo_body(&id, &text) {
+                    Ok(t) => td = Some(t),
+                    Err(e) => return fail(&e.to_string()),
+                }
+            }
             if let Some(on) = github_on {
                 match proj.set_github(&id, on) {
                     Ok(t) => td = Some(t),

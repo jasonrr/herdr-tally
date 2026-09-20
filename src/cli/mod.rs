@@ -15,6 +15,7 @@ mod comments;
 mod dump;
 mod render;
 mod scratchpads;
+mod store;
 mod sync;
 mod todos;
 
@@ -41,6 +42,11 @@ pub fn sync(args: &[String]) -> ExitCode {
         &crate::store::GhCli,
         &mut io::stdout(),
     ))
+}
+
+/// `tally store …` entry: real store root, stdout.
+pub fn store(args: &[String]) -> ExitCode {
+    exit(store::run(args, None, &mut io::stdout()))
 }
 
 /// `tally dump …` entry: real store root, stdout.
@@ -417,6 +423,45 @@ mod tests {
         assert_eq!(
             after_todo.updated, before_todo.updated,
             "fieldless update must not bump updated"
+        );
+    }
+
+    #[test]
+    fn todos_append_body() {
+        let cli = Cli::new();
+        cli.todos(&["create", "--title", "Notes", "--body", "line1"]);
+        let (_, out) = cli.todos(&["list", "--json"]);
+        let listed: TodoList = serde_json::from_str(&out).unwrap();
+        let id = listed.todos[0].id.clone();
+
+        assert_eq!(cli.todos(&["update", &id, "--append-body", "line2"]).0, 0);
+        let (_, out) = cli.todos(&["get", &id, "--json"]);
+        let got: crate::store::Todo = serde_json::from_str(&out).unwrap();
+        assert_eq!(got.body, "line1\nline2");
+
+        // --append-body-file <path> reads the file
+        let f = cli.repo.path().join("append.txt");
+        std::fs::write(&f, "line3").unwrap();
+        assert_eq!(
+            cli.todos(&["update", &id, "--append-body-file", &f.to_string_lossy()])
+                .0,
+            0
+        );
+        let (_, out) = cli.todos(&["get", &id, "--json"]);
+        let got: crate::store::Todo = serde_json::from_str(&out).unwrap();
+        assert_eq!(got.body, "line1\nline2\nline3");
+
+        // mutually exclusive with --body
+        assert_ne!(
+            cli.todos(&["update", &id, "--body", "x", "--append-body", "y"])
+                .0,
+            0
+        );
+        let (_, out) = cli.todos(&["get", &id, "--json"]);
+        let got: crate::store::Todo = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            got.body, "line1\nline2\nline3",
+            "rejected update must not apply"
         );
     }
 
