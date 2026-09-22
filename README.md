@@ -64,7 +64,7 @@ One store, three thin adapters over it:
 | Adapter | For | Surface |
 |---------|-----|---------|
 | **CLI** | anything that can't speak MCP (scripts, hooks, other agents) | `tally todos …` / `tally scratchpads …` |
-| **MCP** | your agents | 38 `todo_*` / `scratchpad_*` / `comment_*` tools over stdio; each takes an optional `project` (absolute path) to use another repo's store |
+| **MCP** | your agents | 38 `todo_*` / `scratchpad_*` / `comment_*` tools over stdio |
 | **TUI** | the herdr pane | `tally tui todos` / `tally tui scratchpads` |
 
 The `store` is the single source of truth for todos, scratchpads, and their

@@ -117,12 +117,7 @@ struct Tool {
 // when present, and emitting `null` makes Claude Code reject the whole tools list
 // ("inputSchema.required expected an array but got null"). (Go marshaled a nil
 // []string to JSON null; matching that byte-for-byte broke the MCP handshake.)
-// Every tool also gets the optional `project` that dispatch_tool honors.
-fn obj(required: Value, mut props: Value) -> Value {
-    props["project"] = prop(
-        "string",
-        "absolute path of the project whose store to use; defaults to the server's cwd project",
-    );
+fn obj(required: Value, props: Value) -> Value {
     if required.is_null() {
         json!({"type": "object", "properties": props})
     } else {
@@ -439,60 +434,6 @@ mod tests {
             let v: Value = serde_json::from_str(raw).unwrap();
             dispatch_tool(&resolve, name, &v)
         }
-    }
-
-    // Issue #23: dispatch_tool already honors `project`; the schema must say so
-    // or agents never learn it exists.
-    #[test]
-    fn every_tool_advertises_project() {
-        for t in tool_defs().as_array().unwrap() {
-            assert_eq!(
-                t["inputSchema"]["properties"]["project"]["type"], "string",
-                "tool {} lacks a project property",
-                t["name"]
-            );
-        }
-    }
-
-    #[test]
-    fn project_arg_routes_writes_to_that_store() {
-        let e = Env::new();
-        let other = git_repo();
-        let o = serde_json::to_string(&other.path().to_string_lossy()).unwrap();
-        let todo = e
-            .call(
-                "todo_create",
-                &format!(r#"{{"project":{o},"title":"elsewhere"}}"#),
-            )
-            .unwrap();
-        let id = todo["id"].as_str().unwrap().to_string();
-        e.call(
-            "scratchpad_write",
-            &format!(r##"{{"project":{o},"content":"# pad\nelsewhere"}}"##),
-        )
-        .unwrap();
-        e.call(
-            "comment_add",
-            &format!(r#"{{"project":{o},"id":"{id}","body":"elsewhere"}}"#),
-        )
-        .unwrap();
-
-        let there = e.call("comment_list", &format!(r#"{{"project":{o},"id":"{id}"}}"#));
-        assert!(
-            serde_json::to_string(&there.unwrap())
-                .unwrap()
-                .contains("elsewhere")
-        );
-        let pads = e
-            .call("scratchpad_list", &format!(r#"{{"project":{o}}}"#))
-            .unwrap();
-        assert!(serde_json::to_string(&pads).unwrap().contains("pad"));
-
-        // cwd store stays empty
-        let here = serde_json::to_string(&e.call("todo_list", "{}").unwrap()).unwrap();
-        assert!(!here.contains("elsewhere"), "leaked into cwd store: {here}");
-        let here = serde_json::to_string(&e.call("scratchpad_list", "{}").unwrap()).unwrap();
-        assert!(!here.contains("pad"), "leaked into cwd store: {here}");
     }
 
     // Port of TestDispatchTodoCreateThenList.
