@@ -149,7 +149,7 @@ if mkdir -p "$HOME/.claude" 2>/dev/null && tmp=$(mktemp 2>/dev/null); then
   cat >> "$tmp" <<'BLOCK'
 <!-- tally:start -->
 ## tally — shared todos, scratchpads, plans & comments (live in herdr panes)
-When a project has a tally store, prefer the `tally_*` MCP tools (`todo_*` / `scratchpad_*` / `comment_*`; ToolSearch for `mcp__tally__` to load them). They return item ids.
+When a project has a tally store, prefer the `tally_*` MCP tools (`todo_*` / `scratchpad_*` / `comment_*`; ToolSearch for `mcp__tally__` to load them). They return item ids. Every tool takes an optional `project` (absolute path) to use another repo's store.
 - **Scratchpad**: multi-step plans, handoffs, context too big for a todo. Revision-guarded — a read gives a `revision`; pass it back on the next write, and on a mismatch re-read.
 - **Todo**: one discrete follow-up/blocker. status = `open`|`in_progress`|`completed`, priority = `p0`|`p1`|`p2`|`p3` (p0 = critical … p3 = low; anything else is rejected).
 - **Comment**: a margin note (the *why*), not a state change. Lock a todo you're actively editing.
