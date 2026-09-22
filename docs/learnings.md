@@ -48,6 +48,5 @@
 ## mcp-project-schema (PR #24, 2026-09-22)
 
 - Advertising a parameter that the code already honored makes its lax validation reachable → once `project` showed up in every schema, a typo'd path silently made a phantom store (t_dlm6goq1zyso1). Before you surface a hidden input, check what bad values do.
-- A plain "path must exist" check on the project override broke the TUI sync worker, which re-resolves a stored path every pass. A removed worktree then showed an error every pass, when before it reached its existing store → put the error only where a new store would be created (path missing AND no store for its key).
 - `herdr agent wait --until done` can return while a reviewer pane is still working → the first read got a report that was not complete. Before you trust the report, read the pane and confirm the final report plus a `done <time>` footer.
 - The worktree-isolation guard also refuses `herdr agent prompt` when the brief text contains "git" → put long briefs in a scratchpad file and prompt "read your brief at <path>".

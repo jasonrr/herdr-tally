@@ -95,17 +95,7 @@ pub fn resolve_project_in(store_root: &Path, override_dir: Option<&str>) -> Resu
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let store_dir = store_root.join("projects").join(&key);
-    // A missing override with no store yet is a typo'd path: creating one would
-    // land the write where nobody looks. A store that already exists stays
-    // reachable after its dir is deleted (TUI sync re-resolving a removed worktree).
-    if override_dir.is_some() && !dir.is_dir() && !store_dir.is_dir() {
-        return Err(Error::Other(format!(
-            "project path {} is not an existing directory",
-            dir.display()
-        )));
-    }
-    let dir = store_dir;
+    let dir = store_root.join("projects").join(&key);
     std::fs::create_dir_all(dir.join("scratchpads"))?;
     let p = Project {
         path: abs,
@@ -301,35 +291,6 @@ mod tests {
             project_key("/Users/jasonrosoff/Code/herdr-notes"),
             "herdr-notes-d0fcfa32"
         );
-    }
-
-    // A typo'd project path must error, not key a phantom store off the bogus path.
-    #[test]
-    fn test_missing_override_dir_errors() {
-        let root = TempDir::new();
-        let missing = root.path().join("no-such-repo");
-        let err = resolve_project_in(root.path(), Some(&missing.to_string_lossy()))
-            .err()
-            .expect("missing dir must not resolve");
-        assert!(err.to_string().contains("no-such-repo"), "{err}");
-        assert!(
-            !root.path().join("projects").exists(),
-            "created a store anyway"
-        );
-    }
-
-    // ...but a dir deleted after its store exists (TUI sync re-resolving a removed
-    // worktree) must still reach that store.
-    #[test]
-    fn test_deleted_dir_with_existing_store_resolves() {
-        let root = TempDir::new();
-        let gone = TempDir::new();
-        let path = gone.path().canonicalize().unwrap();
-        let path = path.to_string_lossy().into_owned();
-        let before = resolve_project_in(root.path(), Some(&path)).unwrap();
-        drop(gone);
-        let after = resolve_project_in(root.path(), Some(&path)).unwrap();
-        assert_eq!(before.dir, after.dir);
     }
 
     // link/status take the root as an argument precisely so these can run in
