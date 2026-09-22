@@ -44,9 +44,3 @@
 - A store check that joins a rel_path onto `Project.path` sees only the MAIN checkout (worktrees share one store) → `comments prune` deleted live comments on a plan file that existed only in a feature worktree. Any "does this file still exist" test must ask every root in `git worktree list`.
 - A path taken from argv and written into a symlink must be canonicalized first → a relative target resolves against the symlink's own directory, not the caller's cwd, and `store link ./sync` bricked the store. Temp-dir tests never catch it because their paths are always absolute.
 - The rtk `git` → `rtk git` rewrite is unreadable to the worktree-isolation guard → every git call in an `EnterWorktree` session is refused, and subagents quietly switch to `/usr/bin/git`. Fix the hook to skip `.claude/worktrees/`, or approve `/usr/bin/git` up front.
-
-## mcp-project-schema (PR #24, 2026-09-22)
-
-- Advertising a parameter that the code already honored makes its lax validation reachable → once `project` showed up in every schema, a typo'd path silently made a phantom store (t_dlm6goq1zyso1). Before you surface a hidden input, check what bad values do.
-- `herdr agent wait --until done` can return while a reviewer pane is still working → the first read got a report that was not complete. Before you trust the report, read the pane and confirm the final report plus a `done <time>` footer.
-- The worktree-isolation guard also refuses `herdr agent prompt` when the brief text contains "git" → put long briefs in a scratchpad file and prompt "read your brief at <path>".
