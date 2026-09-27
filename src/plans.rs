@@ -96,7 +96,21 @@ pub fn open_in_editor(editor: &str, path: &Path) -> std::io::Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()?;
-    std::thread::spawn(move || child.wait()); // reap; GUI launchers exit fast
+    // ponytail: a failure after this 200ms window goes unreported; GUI
+    // launchers like `zed` exit 0 well inside it.
+    for _ in 0..20 {
+        if let Some(st) = child.try_wait()? {
+            return if st.success() {
+                Ok(())
+            } else {
+                Err(std::io::Error::other(format!(
+                    "`{editor}` exited with {st}"
+                )))
+            };
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    std::thread::spawn(move || child.wait()); // still running: reap later
     Ok(())
 }
 
@@ -315,6 +329,13 @@ mod tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         panic!("editor never received the path");
+    }
+
+    #[test]
+    fn open_in_editor_reports_a_missing_editor() {
+        let dir = TempDir::new();
+        let err = open_in_editor("no-such-editor-xyz", &dir.path().join("p.md")).unwrap_err();
+        assert!(err.to_string().contains("no-such-editor-xyz"), "{err}");
     }
 
     // --- config parsing (config_test.go) ---
