@@ -1110,6 +1110,7 @@ const HELP_ROWS: &[(&str, &str)] = &[
     ("List", ""),
     ("↑↓ j k", "move"),
     ("enter o", "open / read"),
+    ("O", "open in editor (plans)"),
     ("n", "new"),
     ("e", "edit / plan paths"),
     ("y  Y", "copy id · copy body"),

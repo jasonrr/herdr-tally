@@ -921,6 +921,7 @@ impl App {
                     self.enter_read();
                 }
             }
+            KeyCode::Char('O') if self.tab == Tab::Plans => self.open_external(),
             KeyCode::Char('y') => self.yank(),
             KeyCode::Char('Y') => self.yank_content(),
             KeyCode::Char('n') if self.tab != Tab::Plans => self.begin_edit_new(),
@@ -1801,6 +1802,21 @@ impl App {
             Ok(()) => self.status = format!("copied {id} to clipboard"),
             Err(e) => self.status = format!("copy failed: {e}"),
         }
+    }
+
+    /// Plans only: their id is the absolute file path.
+    fn open_external(&mut self) {
+        let Some(path) = self.selected_id() else {
+            return;
+        };
+        let Some(editor) = plans::load_editor() else {
+            self.status = "no editor set: put e.g. `zed` in <config>/editor".to_string();
+            return;
+        };
+        self.status = match plans::open_in_editor(&editor, std::path::Path::new(&path)) {
+            Ok(()) => format!("opened in {editor}"),
+            Err(e) => format!("open failed: {e}"),
+        };
     }
 
     fn yank_content(&mut self) {
