@@ -51,3 +51,7 @@
 - A plain "path must exist" check on the project override broke the TUI sync worker, which re-resolves a stored path every pass. A removed worktree then showed an error every pass, when before it reached its existing store → put the error only where a new store would be created (path missing AND no store for its key).
 - `herdr agent wait --until done` can return while a reviewer pane is still working → the first read got a report that was not complete. Before you trust the report, read the pane and confirm the final report plus a `done <time>` footer.
 - The worktree-isolation guard also refuses `herdr agent prompt` when the brief text contains "git" → put long briefs in a scratchpad file and prompt "read your brief at <path>".
+
+## open-plan-in-editor (PR #26, 2026-09-27)
+
+- A detached spawn that reaps the child on a thread loses the exit status → the TUI said "opened" even when the editor command did not exist (sh exit 127). When a status line reports success for a child process, check a short `try_wait` window first (t_dlq5kbn6iybc7).
