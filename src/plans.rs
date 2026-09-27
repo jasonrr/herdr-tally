@@ -68,6 +68,38 @@ fn config_file() -> Option<PathBuf> {
     config_dir().map(|d| d.join("plan-paths"))
 }
 
+/// The external editor command from `<config>/editor` (first non-comment line,
+/// e.g. `zed`), or `$TALLY_EDITOR`. Deliberately not `$EDITOR`: it's usually a
+/// terminal editor, and we launch detached so the TUI keeps the terminal.
+pub fn load_editor() -> Option<String> {
+    config_dir()
+        .and_then(|d| fs::read_to_string(d.join("editor")).ok())
+        .and_then(|s| {
+            s.lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty() && !l.starts_with('#'))
+                .map(String::from)
+        })
+        .or_else(|| env_nonempty("TALLY_EDITOR"))
+}
+
+/// Launches `editor <path>` detached. `editor` goes through `sh -c` so it may
+/// carry args (`zed -n`); the path is passed as `$1`, never interpolated.
+pub fn open_in_editor(editor: &str, path: &Path) -> std::io::Result<()> {
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("/bin/sh")
+        .arg("-c")
+        .arg(format!("{editor} \"$1\""))
+        .arg("sh")
+        .arg(path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    std::thread::spawn(move || child.wait()); // reap; GUI launchers exit fast
+    Ok(())
+}
+
 /// Editable text shown by the TUI: one configured plan dir per line.
 pub fn load_plan_paths_text() -> String {
     let mut s = load_plan_paths().join("\n");
@@ -269,6 +301,20 @@ mod tests {
         fs::write(path, body).unwrap();
         let f = fs::OpenOptions::new().write(true).open(path).unwrap();
         f.set_modified(mtime).unwrap();
+    }
+
+    #[test]
+    fn open_in_editor_passes_path_with_spaces_as_one_arg() {
+        let dir = TempDir::new();
+        let target = dir.path().join("a plan; rm x.md");
+        open_in_editor("touch", &target).unwrap();
+        for _ in 0..100 {
+            if target.exists() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("editor never received the path");
     }
 
     // --- config parsing (config_test.go) ---
