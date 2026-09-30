@@ -7,7 +7,7 @@ description: Whole-branch adversarial review before merge — runs against the o
 
 One deep pass over `merge-base..HEAD` — the open PR's diff, sized to it. A false finding costs one fix dispatch; a missed p1 ships a bug — calibrate to that asymmetry, not away from it.
 
-**Seed the dev-loop config first.** The lens charters and p1 checklist below live in `.claude/tally-dev-loop.md`, which is gitignored and so absent from a fresh worktree checkout — without it this review silently runs default lenses instead of the repo's. If it's missing here but present in the main worktree, copy it in before dispatching reviewers (a no-op when already present or the repo has no dev loop) using the same one-liner as skills/build/SKILL.md's "Then seed the dev-loop config" step — read it there if not already in context; keep this pointer in sync with that file. The copy stays gitignored — never enters the PR.
+**Seed the dev-loop config first.** `.claude/tally-dev-loop.md` is gitignored and so absent from a fresh worktree checkout. It carries routing, and — in a repo with no committed `docs/review-lenses.md` — the lens charters and p1 checklist this review reads, so without it such a repo silently runs default lenses instead of its own. If it's missing here but present in the main worktree, copy it in before dispatching reviewers (a no-op when already present or the repo has no dev loop) using the same one-liner as skills/build/SKILL.md's "Then seed the dev-loop config" step — read it there if not already in context; keep this pointer in sync with that file. The copy stays gitignored — never enters the PR.
 
 ## Severity — definitions, not vibes
 
@@ -15,7 +15,7 @@ One deep pass over `merge-base..HEAD` — the open PR's diff, sized to it. A fal
 - **p2:** wrong on an edge the user will eventually hit; missing error handling around I/O; silent failure paths.
 - **p3:** hygiene.
 
-If `.claude/tally-dev-loop.md` exists, its lens charters replace the default lenses below, and the repo's documented invariants are the p1 checklist.
+Use the repo's lens charters — `docs/review-lenses.md` when it exists, else the `## Lenses` section of `.claude/tally-dev-loop.md` — in place of the default lenses below, and the repo's documented invariants as the p1 checklist. The committed file wins because it reaches every worktree and every teammate; the dev-loop file is per-developer and is often absent. When neither exists, the defaults below stand.
 
 ## Reviewers
 

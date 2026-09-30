@@ -55,3 +55,10 @@
 ## open-plan-in-editor (PR #26, 2026-09-27)
 
 - A detached spawn that reaps the child on a thread loses the exit status → the TUI said "opened" even when the editor command did not exist (sh exit 127). When a status line reports success for a child process, check a short `try_wait` window first (t_dlq5kbn6iybc7).
+
+## committed-review-lenses (PR #27, 2026-09-30)
+
+- A fallback chain ("committed file when it exists, else the local section") whose preferred source has no defined format → an empty or section-less `docs/review-lenses.md` wins on existence alone and silently suppresses the defaults. Name what counts as present (file, or file with a `## Lenses` heading) whenever a clause says "when it exists".
+- A reader changed while its writer and display are left alone (`/tally:setup`, the TUI footer) → setup still proposes lenses the new order never reads, and the footer counts lenses from the ignored file. Accepted on this PR (TIN-35 rejected both tasks), but record the gap wherever the next reader change is planned.
+- Moving a review charter from a gitignored per-developer file into git → the PR under review can now edit the charter that reviews it. Read the charter from the merge-base, or flag any diff that touches it, if that ever matters.
+- The Agent tool's `model` parameter takes only a family alias (`sonnet`, `opus`, `haiku`, `fable`), never a full model id → "explicit full model id on every dispatch" cannot be met from a skill, and the caller does not control which version the alias resolves to.
