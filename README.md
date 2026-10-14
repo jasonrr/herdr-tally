@@ -138,6 +138,15 @@ tools. No Rust toolchain is needed when a release exists for your platform;
 otherwise install falls back to building from source with `cargo` (install Rust
 from https://rustup.rs).
 
+To upgrade later (herdr 0.9.4+):
+
+```bash
+herdr plugin update tally
+```
+
+This re-runs the same install step, so the binary and MCP registration move to the
+new version. Restart any agent session that has tally's MCP server open.
+
 **Platforms:** macOS and Linux. Windows is not yet supported.
 
 ### If the automatic wiring is skipped
