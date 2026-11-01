@@ -9,7 +9,7 @@ You are configuring, never assuming. This skill writes exactly one file — `.cl
 
 ## 1. Current state
 
-If `.claude/tally-dev-loop.md` exists and `.claude/dev-loop.md` does not, offer to `mv` it to the new name (the loop reads both; the new name is just clearer) and then continue with the existing-file flow. If `.claude/dev-loop.md` already exists, show it and ask what to change — routing on/off, builder model, lens edits — then apply just that and stop. A file written before the `builder-model` key existed simply lacks it; offer to add it. The full flow below is for first-time setup.
+If `.claude/tally-dev-loop.md` exists and `.claude/dev-loop.md` does not, offer to rename it to the new name (the loop reads both; the new name is just clearer) — `git mv` if the file is tracked, plain `mv` otherwise; if `.gitignore` or `.git/info/exclude` lists the old name, add `.claude/dev-loop.md` beside it so the renamed file stays ignored — and then continue with the existing-file flow. If `.claude/dev-loop.md` already exists, show it and ask what to change — routing on/off, builder model, lens edits — then apply just that and stop. A file written before the `builder-model` key existed simply lacks it; offer to add it. The full flow below is for first-time setup.
 
 ## 1b. GitHub — required
 
