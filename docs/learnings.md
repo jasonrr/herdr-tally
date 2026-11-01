@@ -75,3 +75,7 @@
 - `hc send` exit codes: 3 = no such terminal, 11 = target has finished → retry loops must stop on those, not spend their retries.
 - A cleanup gate written as "command output is empty" passes when the command errors (missing remote branch prints only to stderr) → gates must also require exit 0.
 - Reviewer reports read from a herdr pane (`pane read --source recent`) lose their top half when long → ask reviewers to write the report to a file in the checkout as well.
+
+## split-loop (PR #pending, 2026-11-01)
+
+- Config-file fallback written as "try each name, skip on read error" (TS, Rust) vs "first file that exists wins" (bash `[ -f ]`) → the readers disagree on an unreadable or directory-shaped new file; when a plan says "mirror the hook", spell out the shadowing rule, not just the names.
