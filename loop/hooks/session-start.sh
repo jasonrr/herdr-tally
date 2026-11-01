@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# SessionStart hook for the tally plugin. Emits the dev-loop routing rule ONLY
-# when this repo opted in via .claude/tally-dev-loop.md with `routing: on` — the file
-# /loop:setup writes. Silent no-op everywhere else: consent lives in the repo,
-# not in the install.
+# SessionStart hook for the loop plugin. Emits the dev-loop routing block ONLY
+# when this repo opted in via .claude/dev-loop.md (or the older
+# .claude/tally-dev-loop.md) containing `routing: on` — the file /loop:setup
+# writes. Silent no-op everywhere else: consent lives in the repo, not the install.
 set -euo pipefail
 
-cfg="${CLAUDE_PROJECT_DIR:-.}/.claude/tally-dev-loop.md"
+dir="${CLAUDE_PROJECT_DIR:-.}/.claude"
+cfg="$dir/dev-loop.md"
+[ -f "$cfg" ] || cfg="$dir/tally-dev-loop.md"
 if [ ! -f "$cfg" ] || ! grep -q '^routing: on$' "$cfg" 2>/dev/null; then
   exit 0
 fi
 
-ctx='<dev-loop>\nThis project uses the tally dev loop. Standing routing — the human should never have to ask:\n- Feature or non-trivial change requested → run /loop:brainstorm before writing any code.\n- Bug, failing test, or unexpected behavior → run /loop:debug before proposing any fix.\n- Approved design (tally scratchpad tagged design) or any multi-step implementation → run /loop:plan before building.\n- A plan doc with plan:<slug> todos exists → execute it with /loop:build.\n- Branch complete, or a merge/PR is requested → run /loop:review-branch first.\nTrivial one-file changes and pure questions are exempt. When this rule triggers a skill, say so in one line.\n</dev-loop>'
-
+# routing.md is the single copy of the block; JSON-escape it for additionalContext.
+ctx="$(awk '{ gsub(/\r/, ""); gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); gsub(/\t/, "\\t"); printf "%s\\n", $0 }' "$(dirname "$0")/routing.md")"
 printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"%s"}}\n' "$ctx"

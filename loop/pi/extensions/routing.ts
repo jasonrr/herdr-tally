@@ -2,34 +2,21 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// The tally dev-loop routing block. CANONICAL COPY: hooks/session-start.sh
-// (the Claude SessionStart hook); also mirrored in skills/setup/SKILL.md.
-// Keep all copies byte-identical when the routing rules change.
-// ponytail: 3 hand-synced copies (hook, setup skill, here). A shared data
-// file read by both bash and TS would kill the drift — not worth the
-// machinery until the block actually churns.
-const DEV_LOOP_BLOCK = `<dev-loop>
-This project uses the tally dev loop. Standing routing — the human should never have to ask:
-- Feature or non-trivial change requested → run /loop:brainstorm before writing any code.
-- Bug, failing test, or unexpected behavior → run /loop:debug before proposing any fix.
-- Approved design (tally scratchpad tagged design) or any multi-step implementation → run /loop:plan before building.
-- A plan doc with plan:<slug> todos exists → execute it with /loop:build.
-- Branch complete, or a merge/PR is requested → run /loop:review-branch first.
-Trivial one-file changes and pure questions are exempt. When this rule triggers a skill, say so in one line.
-</dev-loop>`;
+// Single copy of the routing block, shared with hooks/session-start.sh.
+// Read at import so a wrong path fails loudly at load, not silently per turn.
+// Assumes pi loads this file in place (it does today); a bundler would break the relative path.
+const DEV_LOOP_BLOCK = readFileSync(new URL("../../hooks/routing.md", import.meta.url), "utf8").trimEnd();
 
-// Mirrors hooks/session-start.sh: inject only when this repo opted in via
-// .claude/tally-dev-loop.md containing a `routing: on` line. Missing file or
-// missing line → routing off, silently (same as the hook's `exit 0`). Exact
-// line match (not a multiline regex) so a CRLF `routing: on\r` line is
-// correctly treated as NOT matching, same as the hook's `grep '^routing: on$'`.
+// Mirrors hooks/session-start.sh: .claude/dev-loop.md, else the older
+// .claude/tally-dev-loop.md; a `routing: on` line, matched exactly (no CRLF).
 function routingEnabled(cwd: string): boolean {
-  try {
-    const cfg = readFileSync(join(cwd, ".claude", "tally-dev-loop.md"), "utf8");
-    return cfg.split("\n").some((line) => line === "routing: on");
-  } catch {
-    return false;
+  for (const name of ["dev-loop.md", "tally-dev-loop.md"]) {
+    try {
+      const cfg = readFileSync(join(cwd, ".claude", name), "utf8");
+      return cfg.split("\n").some((line) => line === "routing: on");
+    } catch {}
   }
+  return false;
 }
 
 export default function (pi: ExtensionAPI) {
