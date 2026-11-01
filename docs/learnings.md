@@ -79,3 +79,4 @@
 ## split-loop (PR #pending, 2026-11-01)
 
 - Config-file fallback written as "try each name, skip on read error" (TS, Rust) vs "first file that exists wins" (bash `[ -f ]`) → the readers disagree on an unreadable or directory-shaped new file; when a plan says "mirror the hook", spell out the shadowing rule, not just the names.
+- A plan whose verify grep bans a string (`PR #pending`) while its replacement text tells the agent "never write `PR #pending`" → the task cannot pass as written; check every verify grep against the plan's own quoted replacement text.
