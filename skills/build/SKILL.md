@@ -7,6 +7,8 @@ description: Execute a plan task-by-task with fresh subagents — TDD, per-task 
 
 You are the controller: dispatch, verify, adjudicate. Subagents implement. Work on a branch or worktree, never main. Usually `/tally:plan` has already dispatched you into a fresh worktree — if you are in a linked worktree (`.git` is a file) or on a non-main `<type>/<slug>` branch, work in place. Only when invoked directly on `main` in the main checkout do you isolate yourself — `EnterWorktree` onto a `<type>/<slug>` branch and run the loop in-session, in herdr or not. Do NOT `herdr worktree create` here: that spawns a whole workspace whose auto-launched agent you would then orphan by working inline. The herdr worktree *space* is `/tally:plan`'s dispatch hand-off, not something build re-creates.
 
+In the Herdr desktop app (`$HC_TERMINAL_ID` set) the same holds: work in place when dispatched; on `main`, `EnterWorktree` — never `herdr-app do space.new` from build.
+
 Input: the `plan:<slug>` scratchpad **id** (from your dispatch brief) and its `plan:<slug>` tally todos. If neither is in context, `scratchpad_find` the most recent `plan:`-tagged scratchpad, `todo_list` its tag, and confirm with the user before starting.
 
 **First, materialize the plan and the design.**
@@ -40,6 +42,12 @@ on **every** exit path — all tasks done, blocked awaiting the operator, stoppe
 condition, or abandoned — is the one-line report the brief specified:
 
     herdr agent prompt <dispatcher-pane-id> "<slug>: <done|blocked|failed> — PR #<n> <url> | suite <N> OK | parked: <ids or none> | needs human: <one line or none>"
+
+If your brief came from the Herdr desktop app (it names an hc terminal such as `t5` and says `hc send`), send the same line with:
+
+    hc send <dispatcher-terminal> "<slug>: <done|blocked|failed> — PR #<n> <url> | suite <N> OK | parked: <ids or none> | needs human: <one line or none>"
+
+If it exits non-zero, run `hc wait <dispatcher-terminal>` and send again; repeat up to 3 times.
 
 Send it once, last, after the PR and review-branch — **once total**, not once per skill: if
 /tally:review-branch already sent a `blocked` report when it stopped at its gate, that was the
