@@ -1043,7 +1043,7 @@ fn draw_footer(app: &App, f: &mut Frame, area: Rect) {
         .map(|s| s.clone())
         .unwrap_or_default();
     let devloop = match app.devloop {
-        None => "dev loop: not set up · /tally:setup".to_string(),
+        None => "dev loop: not set up · /loop:setup".to_string(),
         Some((true, n)) => format!("dev loop: routing on · {n} lenses"),
         Some((false, n)) => format!("dev loop: routing off · {n} lenses"),
     };

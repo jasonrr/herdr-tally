@@ -184,8 +184,9 @@ pub struct App {
     pub launch_inode: Option<u64>,
     pub stale: bool,
 
-    /// (routing on?, lens count) from `.claude/tally-dev-loop.md`, or None when the
-    /// repo hasn't run /tally:setup. Display-only.
+    /// (routing on?, lens count) from `.claude/dev-loop.md` (or the older
+    /// `.claude/tally-dev-loop.md`), or None when the repo hasn't run /loop:setup.
+    /// Display-only.
     pub devloop: Option<(bool, usize)>,
 
     /// Lock owner last published to herdr's pane border, so the reload only
@@ -193,8 +194,9 @@ pub struct App {
     pub pane_lock: Option<String>,
 }
 
-/// (routing on?, lens count) from <project>/.claude/tally-dev-loop.md, or None when
-/// the repo hasn't run /tally:setup. Display-only — the TUI never writes this.
+/// (routing on?, lens count) from <project>/.claude/dev-loop.md (or the older
+/// `.claude/tally-dev-loop.md`), or None when the repo hasn't run /loop:setup.
+/// Display-only — the TUI never writes this.
 /// Reflect a todo lock as a pill on this pane's herdr border, or clear it with
 /// `owner = None`.
 ///
@@ -241,7 +243,9 @@ fn report_lock_pill(owner: Option<&str>) {
 }
 
 pub(crate) fn devloop_status(project_root: &std::path::Path) -> Option<(bool, usize)> {
-    let text = std::fs::read_to_string(project_root.join(".claude/tally-dev-loop.md")).ok()?;
+    let text = ["dev-loop.md", "tally-dev-loop.md"]
+        .iter()
+        .find_map(|n| std::fs::read_to_string(project_root.join(".claude").join(n)).ok())?;
     let routing = text.split('\n').any(|l| l == "routing: on");
     let lenses = text.split("## Lenses").nth(1).map_or(0, |rest| {
         rest.lines()
@@ -1901,6 +1905,31 @@ mod tests {
         )
         .unwrap();
         assert_eq!(devloop_status(dir.path()), Some((true, 2)));
+    }
+
+    #[test]
+    fn devloop_status_reads_new_name() {
+        let dir = TempDir::new();
+        std::fs::create_dir_all(dir.path().join(".claude")).unwrap();
+        std::fs::write(
+            dir.path().join(".claude/dev-loop.md"),
+            "# dev loop\nrouting: on\n",
+        )
+        .unwrap();
+        assert_eq!(devloop_status(dir.path()), Some((true, 0)));
+    }
+
+    #[test]
+    fn devloop_status_new_name_wins() {
+        let dir = TempDir::new();
+        std::fs::create_dir_all(dir.path().join(".claude")).unwrap();
+        std::fs::write(dir.path().join(".claude/dev-loop.md"), "routing: off\n").unwrap();
+        std::fs::write(
+            dir.path().join(".claude/tally-dev-loop.md"),
+            "routing: on\n",
+        )
+        .unwrap();
+        assert_eq!(devloop_status(dir.path()), Some((false, 0)));
     }
 
     /// The whole point of the delete-comment picker: the row you highlighted is
