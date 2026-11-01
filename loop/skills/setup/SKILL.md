@@ -17,11 +17,11 @@ Show the user this exact rule — the block the hook injects (kept in sync with 
 
     <dev-loop>
     This project uses the tally dev loop. Standing routing — the human should never have to ask:
-    - Feature or non-trivial change requested → run /tally:brainstorm before writing any code.
-    - Bug, failing test, or unexpected behavior → run /tally:debug before proposing any fix.
-    - Approved design (tally scratchpad tagged design) or any multi-step implementation → run /tally:plan before building.
-    - A plan doc with plan:<slug> todos exists → execute it with /tally:build.
-    - Branch complete, or a merge/PR is requested → run /tally:review-branch first.
+    - Feature or non-trivial change requested → run /loop:brainstorm before writing any code.
+    - Bug, failing test, or unexpected behavior → run /loop:debug before proposing any fix.
+    - Approved design (tally scratchpad tagged design) or any multi-step implementation → run /loop:plan before building.
+    - A plan doc with plan:<slug> todos exists → execute it with /loop:build.
+    - Branch complete, or a merge/PR is requested → run /loop:review-branch first.
     Trivial one-file changes and pure questions are exempt. When this rule triggers a skill, say so in one line.
     </dev-loop>
 
@@ -29,7 +29,7 @@ And the mechanism in one sentence: the tally plugin's SessionStart hook emits th
 
 ## 3. Builder model — set the default
 
-`/tally:plan` dispatches a build controller into its own pane. Launched bare, a Claude-kind
+`/loop:plan` dispatches a build controller into its own pane. Launched bare, a Claude-kind
 agent takes its model from the user's global `~/.claude/settings.json`, so the controller lands
 on whatever tier that names — usually the most expensive one. The controller only dispatches,
 verifies and adjudicates; the plan already pins a model per task for the implementers who do
@@ -40,7 +40,7 @@ default), `sonnet` (right when plans pin every task to sonnet or haiku), or `fab
 answer as `builder-model: <value>`.
 
 Say what the key is, in one line: it is the **default offered at dispatch, not a lock** —
-`/tally:plan` shows it prefilled and the human can override it per build. Only Claude- and
+`/loop:plan` shows it prefilled and the human can override it per build. Only Claude- and
 Pi-kind panes consume it; other agent kinds launch bare, as today.
 
 ## 4. Reviewer lenses — scan, propose, confirm

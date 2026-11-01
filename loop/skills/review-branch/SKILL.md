@@ -1,6 +1,6 @@
 ---
 name: review-branch
-description: Whole-branch adversarial review before merge — runs against the open PR (build opens it), scoped reviewers probe the live tree, findings carry verdicts and defined severities, p1s fixed in one consolidated pass pushed to the PR. Use when a feature branch is complete (after /tally:build) or before merge.
+description: Whole-branch adversarial review before merge — runs against the open PR (build opens it), scoped reviewers probe the live tree, findings carry verdicts and defined severities, p1s fixed in one consolidated pass pushed to the PR. Use when a feature branch is complete (after /loop:build) or before merge.
 ---
 
 # Review branch
@@ -47,4 +47,4 @@ Run the full test suite and lint fresh, in this session, and read the output. Th
 3. Commit the changed files with explicit paths and push to the PR branch.
 4. **Archive.** Only if the branch came from a `plan:<slug>` whose plan file is in this PR, and only once that push succeeds: `scratchpad_archive` that `plan:<slug>` scratchpad and the `design` scratchpad its header names (read each first — archive takes the current revision). Git now holds the durable copy. Never pick a scratchpad by guessing from the branch name; if there is no plan, or the push failed, archive nothing.
 
-Then present the real options — the PR is already open, so: mark it ready / merge it / leave it for the user — and wait for the user's choice. If you were dispatched (your brief named a dispatcher pane) and you end here, that is a `blocked` report, not silence — send it before you wait. If the brief named an hc terminal (desktop app), send it with `hc send <dispatcher-terminal> "…"` — the same line /tally:build uses, with its retry rule. The p2/p3 follow-ups live in tally, not in your head. If `.claude/tally-dev-loop.md` doesn't exist, offer /tally:setup once in the closing summary.
+Then present the real options — the PR is already open, so: mark it ready / merge it / leave it for the user — and wait for the user's choice. If you were dispatched (your brief named a dispatcher pane) and you end here, that is a `blocked` report, not silence — send it before you wait. If the brief named an hc terminal (desktop app), send it with `hc send <dispatcher-terminal> "…"` — the same line /loop:build uses, with its retry rule. The p2/p3 follow-ups live in tally, not in your head. If `.claude/tally-dev-loop.md` doesn't exist, offer /loop:setup once in the closing summary.

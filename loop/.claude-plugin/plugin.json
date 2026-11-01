@@ -1,0 +1,10 @@
+{
+  "name": "loop",
+  "description": "The dev loop: brainstorm → plan → build → review-branch, plus debug and setup. Store-free — designs and plans are committed files, the task ledger is a draft PR checklist, follow-ups are GitHub issues.",
+  "version": "0.2.14",
+  "author": { "name": "Jason Rosoff" },
+  "homepage": "https://github.com/jasonrr/herdr-tally",
+  "repository": "https://github.com/jasonrr/herdr-tally",
+  "license": "MIT",
+  "keywords": ["dev-loop", "skills", "herdr"]
+}

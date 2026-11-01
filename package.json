@@ -1,7 +1,7 @@
 {
   "name": "tally",
   "version": "0.2.14",
-  "description": "Project-scoped todos, scratchpads & plans, plus the tally dev loop — as a pi package.",
+  "description": "Project-scoped todos, scratchpads & plans, plus the dev loop — as a pi package.",
   "keywords": ["pi-package"],
   "license": "MIT",
   "repository": "https://github.com/jasonrr/herdr-tally",
@@ -10,7 +10,7 @@
   },
   "bundledDependencies": ["pi-ask-user"],
   "pi": {
-    "skills": ["skills", "pi/skills"],
-    "extensions": ["pi/extensions"]
+    "skills": ["pi/skills", "loop/skills"],
+    "extensions": ["pi/extensions", "loop/pi/extensions"]
   }
 }
