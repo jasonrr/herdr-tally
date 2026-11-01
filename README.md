@@ -52,7 +52,7 @@ You keep four kinds of artifact in it:
 - **Scratchpads** — the thinking that outgrows a todo: research results, a plan
   you're about to run, a "here's where I left off" handoff.
 - **Plans** — the spec or plan you're executing against. You don't author these in
-  tally — Claude Code's native plan mode and the `/tally:plan` skill already write
+  tally — Claude Code's native plan mode and the `/loop:plan` skill already write
   them to disk; tally surfaces that markdown so you can read it and talk over it
   beside the live todos. Point it at whichever dirs hold yours.
 - **Comments** — the thread that ties it together: a margin note on any todo,
@@ -168,14 +168,19 @@ the `tally:start`/`tally:end` block from `scripts/install.sh` into `~/.claude/CL
 The plugin root is version-hashed; `tail -1` picks the newest if multiple versions
 are present. Prefer the exact command the installer printed over these fallbacks.
 
-### Claude Code plugin (dev loop skills)
+### Claude Code plugins
 
 ```bash
 claude plugin marketplace add jasonrr/herdr-tally   # or the local repo path
-claude plugin install tally@tally
+claude plugin install tally@tally   # the store: MCP server + TUI
+claude plugin install loop@tally    # the dev loop
 ```
 
-Skills arrive namespaced — `/tally:brainstorm`, `/tally:debug`, `/tally:plan`, `/tally:build`, `/tally:review-branch`, `/tally:setup`. The plugin also ships a SessionStart hook that stays **silent** until a repo opts in: consent is the `.claude/tally-dev-loop.md` file that `/tally:setup` writes (delete it, or set `routing: off`, to disarm). If you previously symlinked `skills/*` into `~/.claude/skills/`, remove those symlinks so bare and namespaced names don't both resolve.
+The dev loop is its own plugin, `loop`, and it never touches the tally store. Skills arrive namespaced — `/loop:brainstorm`, `/loop:debug`, `/loop:plan`, `/loop:build`, `/loop:review-branch`, `/loop:setup`. It needs only `gh` and a GitHub remote: designs are `docs/decisions/*.md`, plans are `docs/plans/*.md`, the build ledger is the draft PR checklist, and follow-ups are GitHub issues. The plugin also ships a SessionStart hook that stays **silent** until a repo opts in: consent is the `.claude/dev-loop.md` file that `/loop:setup` writes (the older `.claude/tally-dev-loop.md` still works; delete the file, or set `routing: off`, to disarm). If you previously symlinked `skills/*` into `~/.claude/skills/`, remove those symlinks so bare and namespaced names don't both resolve.
+
+**Upgrading from tally <= 0.2.x.** The skills moved out of `tally` — install `loop@tally`.
+Until `claude plugin update tally@tally` runs, both plugins inject the routing block (a harmless duplicate).
+If you still have `learnings`-tagged scratchpads, copy their bullets into `docs/learnings.md` once by hand (`tally scratchpads list --tag learnings`) — the loop no longer reads them.
 
 ### pi (coding-agent harness)
 
@@ -198,12 +203,12 @@ with tally — no separate install needed. If you also have `pi-ask-user` instal
 on its own, that copy wins and the bundled one stays inactive.
 
 You get two pi-only skills — `/skill:tally` (CLI store adapter) and `/skill:herdr`
-(worktree/pane primitives) — plus the shared dev-loop skills under bare names
+(worktree/pane primitives) — plus the dev-loop skills, shipped in the same pi package from `loop/skills` under bare names
 (`/skill:brainstorm`, `/skill:plan`, `/skill:build`, `/skill:debug`,
 `/skill:review-branch`; pi has no plugin namespace). The routing extension
-(`pi/extensions/routing.ts`) injects the dev-loop rules when a repo opts in via the
-**same** `.claude/tally-dev-loop.md` `routing: on` file Claude uses — one consent
-file governs both agents.
+(`loop/pi/extensions/routing.ts`) injects the dev-loop rules when a repo opts in via the
+**same** `.claude/dev-loop.md` `routing: on` file Claude uses (the older
+`.claude/tally-dev-loop.md` is accepted too) — one consent file governs both agents.
 
 ## Install from source (development)
 

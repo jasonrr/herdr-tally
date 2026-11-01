@@ -124,6 +124,7 @@ The desktop app replaces the `herdr` CLI with `hc` (terminals: run, send, wait, 
 - Report-back is `hc send <terminal> "<line>"` — works to any terminal, not only children.
 - Briefs go in `.tally-brief.md` inside the checkout (read, deleted, then followed).
 - Read `hc --skill` and `herdr-app --skill` before changing these steps; verify flags with `--help`.
+The dev loop is its own plugin in `loop/` (`/loop:*`); it does not use the tally store.
 
 ## macOS-only for now
 

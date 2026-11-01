@@ -113,7 +113,7 @@ fi
 
 # --- 2b. pi package registration (best-effort) ---------------------------------
 # pi is MCP-averse — no server to add. Instead install this repo as a pi package
-# so pi sessions discover the tally skills + routing extension. User-global (no
+# so pi sessions discover the tally skill, the loop skills, and the routing extension. User-global (no
 # -l) so every project's pi sees it. Never fatal.
 # git-source install (not a local-path install): the repo is public and ships a
 # committed package.json with a `pi` key, so `pi install <path>` would otherwise
