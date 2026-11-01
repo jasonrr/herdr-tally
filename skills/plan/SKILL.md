@@ -117,4 +117,4 @@ space open and say so. An orphaned pane is cheap; a closed pane holding unpushed
 Monitor on the pane's agent status, or a wakeup sized to the plan's expected duration. Still no
 polling (see above).
 
-In the desktop app, that one check is `hc get <terminal>` plus `hc read --lines 40 <terminal>`, once — then tell the human what you saw.
+In the desktop app, that one check is `hc get <terminal>` plus `hc read --lines 40 <terminal>`, once — then tell the human what you saw. A plain shell at that terminal means the build *agent* is gone (most likely a reboot: the app brings terminals back as shells, not as the agent). The work is not: the worktree, its commits, and any uncommitted changes are still on disk. Tell the human, and offer to resume it in that shell — for a Claude build, `hc send <terminal> "claude --continue"` (the shell's folder is the worktree, so it picks up that session; the original report-back instruction is in it).
