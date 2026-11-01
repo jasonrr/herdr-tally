@@ -194,9 +194,6 @@ pub struct App {
     pub pane_lock: Option<String>,
 }
 
-/// (routing on?, lens count) from <project>/.claude/dev-loop.md (or the older
-/// `.claude/tally-dev-loop.md`), or None when the repo hasn't run /loop:setup.
-/// Display-only — the TUI never writes this.
 /// Reflect a todo lock as a pill on this pane's herdr border, or clear it with
 /// `owner = None`.
 ///
@@ -242,6 +239,9 @@ fn report_lock_pill(owner: Option<&str>) {
     }
 }
 
+/// (routing on?, lens count) from <project>/.claude/dev-loop.md (or the older
+/// `.claude/tally-dev-loop.md`), or None when the repo hasn't run /loop:setup.
+/// Display-only — the TUI never writes this.
 pub(crate) fn devloop_status(project_root: &std::path::Path) -> Option<(bool, usize)> {
     let text = ["dev-loop.md", "tally-dev-loop.md"]
         .iter()
