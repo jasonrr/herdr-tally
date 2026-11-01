@@ -62,3 +62,16 @@
 - A reader changed while its writer and display are left alone (`/tally:setup`, the TUI footer) → setup still proposes lenses the new order never reads, and the footer counts lenses from the ignored file. Accepted on this PR (TIN-35 rejected both tasks), but record the gap wherever the next reader change is planned.
 - Moving a review charter from a gitignored per-developer file into git → the PR under review can now edit the charter that reviews it. Read the charter from the merge-base, or flag any diff that touches it, if that ever matters.
 - The Agent tool's `model` parameter takes only a family alias (`sonnet`, `opus`, `haiku`, `fable`), never a full model id → "explicit full model id on every dispatch" cannot be met from a skill, and the caller does not control which version the alias resolves to.
+
+## herdr-app-dev-loop (PR #31, 2026-11-01)
+
+- The Herdr desktop app leaves `HERDR_ENV` unset in its terminals, so any `HERDR_ENV=1` gate silently routes app sessions to the no-multiplexer path. Gate on `$HC_TERMINAL_ID` first.
+- A smoke test that greps the caller's own screen passes on its own command text. Assert on a nonce sent to a separate `cat` terminal (`hc wait <t> --output <nonce>`).
+- Smoke on 2026-11-01: PASS (space.new + `.tally-brief.md` + `hc send` end-to-end, claude haiku child). Also checked: `hc run … -- prog --flag` passes `--flag` to the program.
+- A verify line `git diff | grep '^-[^-]'` to count removed lines skips any removed markdown bullet (`- **…` shows as `-- `) → the plan's "= 1" check printed 0 on a correct diff. Count with `grep '^-' | grep -vc '^---'`.
+- `hc wait` defaults to a 180 s check-in but the Bash tool kills calls at 120 s by default → every `hc wait` in a skill needs `--timeout 100` (or less).
+- `hc send` from a child into a busy agent terminal pastes a new user prompt there → don't use it as a "done" ping for reviewers the controller already `hc wait --children all`s on. `hc` terminal names are global across live terminals → prefix them with the caller's `$HC_TERMINAL_ID` and a round number.
+- `hc kill` leaves the terminal listed as `finished` and its name taken → re-running a reviewer under the same name fails with `name_taken`. Always `hc kill <t>` then `hc rm <t>`.
+- `hc send` exit codes: 3 = no such terminal, 11 = target has finished → retry loops must stop on those, not spend their retries.
+- A cleanup gate written as "command output is empty" passes when the command errors (missing remote branch prints only to stderr) → gates must also require exit 0.
+- Reviewer reports read from a herdr pane (`pane read --source recent`) lose their top half when long → ask reviewers to write the report to a file in the checkout as well.

@@ -114,6 +114,17 @@ though `codesign -v` reports "valid on disk". A fresh inode (rm then cp) avoids 
   re-verifies the pin above — see the `verify-herdr-version` skill. Gotcha it encodes:
   `pane list` emits JSON by default and *rejects* `--json`.
 
+## Herdr desktop app (verified live against herdr-core 0.1.16)
+
+The desktop app replaces the `herdr` CLI with `hc` (terminals: run, send, wait, read) and
+`herdr-app` (spaces/tabs the person sees). Dev-loop skills branch on `$HC_TERMINAL_ID`
+(set in app terminals; `HERDR_ENV` is empty there) before `HERDR_ENV=1`.
+- No worktree command: `git worktree add` + `herdr-app do space.new --folder … --argv '[…]' --task …`
+  (prints `{"space","tab","terminal"}`). Close with `space.close --id <sp> --confirmed true`.
+- Report-back is `hc send <terminal> "<line>"` — works to any terminal, not only children.
+- Briefs go in `.tally-brief.md` inside the checkout (read, deleted, then followed).
+- Read `hc --skill` and `herdr-app --skill` before changing these steps; verify flags with `--help`.
+
 ## macOS-only for now
 
 Manifest declares `platforms = ["macos"]`; scripts hardcode Homebrew paths.
