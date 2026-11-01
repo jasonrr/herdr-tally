@@ -63,7 +63,7 @@
 - Moving a review charter from a gitignored per-developer file into git → the PR under review can now edit the charter that reviews it. Read the charter from the merge-base, or flag any diff that touches it, if that ever matters.
 - The Agent tool's `model` parameter takes only a family alias (`sonnet`, `opus`, `haiku`, `fable`), never a full model id → "explicit full model id on every dispatch" cannot be met from a skill, and the caller does not control which version the alias resolves to.
 
-## herdr-app-dev-loop (PR #pending, 2026-11-01)
+## herdr-app-dev-loop (PR #31, 2026-11-01)
 
 - The Herdr desktop app leaves `HERDR_ENV` unset in its terminals, so any `HERDR_ENV=1` gate silently routes app sessions to the no-multiplexer path. Gate on `$HC_TERMINAL_ID` first.
 - A smoke test that greps the caller's own screen passes on its own command text. Assert on a nonce sent to a separate `cat` terminal (`hc wait <t> --output <nonce>`).
