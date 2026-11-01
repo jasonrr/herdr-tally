@@ -40,8 +40,9 @@ export default function (pi: ExtensionAPI) {
     // ever starts accumulating systemPrompt across turns.
     if (!routingEnabled(ctx.cwd)) return;
     if (event.systemPrompt.includes(DEV_LOOP_BLOCK)) return;
-    // Framework-free test marker: greppable on stderr in -p mode.
-    console.error("[tally-routing] dev-loop routing injected");
+    // Framework-free test marker: greppable on stderr in -p mode. Only there —
+    // in the interactive TUI, stderr paints over the "Working" line every turn.
+    if (!ctx.hasUI) console.error("[tally-routing] dev-loop routing injected");
     return { systemPrompt: `${event.systemPrompt}\n\n${DEV_LOOP_BLOCK}` };
   });
 }
