@@ -9,7 +9,7 @@ You are configuring, never assuming. This skill writes exactly one file — `.cl
 
 ## 1. Current state
 
-If `.claude/tally-dev-loop.md` exists and `.claude/dev-loop.md` does not, offer to rename it to the new name (the loop reads both; the new name is just clearer) — `git mv` if the file is tracked, plain `mv` otherwise; if `.gitignore` or `.git/info/exclude` lists the old name, add `.claude/dev-loop.md` beside it so the renamed file stays ignored — and then continue with the existing-file flow. If `.claude/dev-loop.md` already exists, show it and ask what to change — routing on/off, builder model, lens edits — then apply just that and stop. A file written before the `builder-model` key existed simply lacks it; offer to add it. The full flow below is for first-time setup.
+If `.claude/tally-dev-loop.md` exists and `.claude/dev-loop.md` does not, offer to rename it to the new name (the loop reads both; the new name is just clearer) — `git mv` if the file is tracked, plain `mv` otherwise; if `.gitignore` or `$(git rev-parse --git-path info/exclude)` lists the old name, add `.claude/dev-loop.md` beside it so the renamed file stays ignored — and then continue with the existing-file flow. If `.claude/dev-loop.md` already exists, show it and ask what to change — routing on/off, builder model, lens edits — then apply just that and stop. A file written before the `builder-model` key existed simply lacks it; offer to add it. The full flow below is for first-time setup.
 
 ## 1b. GitHub — required
 
@@ -58,5 +58,5 @@ Recap in two lines: what was written and where; that `rm .claude/dev-loop.md` (o
 
 Then ask (use AskUserQuestion when available) whether to gitignore or commit the file:
 
-- **Gitignore (default)** — add `.claude/dev-loop.md` to `.gitignore`. The loop stays personal to this checkout. This is the safe default because committing it means every teammate who *also* has the loop plugin gets the `<dev-loop>` block injected into their sessions on clone — arming routing for them without their own consent, which is exactly what the rest of this setup is careful to ask about first. (For a purely local ignore that doesn't touch a shared `.gitignore`, use `.git/info/exclude` instead.)
+- **Gitignore (default)** — add `.claude/dev-loop.md` to `.gitignore`. The loop stays personal to this checkout. This is the safe default because committing it means every teammate who *also* has the loop plugin gets the `<dev-loop>` block injected into their sessions on clone — arming routing for them without their own consent, which is exactly what the rest of this setup is careful to ask about first. (For a purely local ignore that doesn't touch a shared `.gitignore`, use `$(git rev-parse --git-path info/exclude)` instead.)
 - **Commit** — the whole team shares one loop. Choose this only when everyone works in this repo with the loop plugin and wants the same routing + lenses. Teammates without the plugin just see inert markdown.

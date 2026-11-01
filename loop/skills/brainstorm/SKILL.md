@@ -17,7 +17,7 @@ Goal: an approved design the size of the problem. No code, scaffolding, or file 
 
 ## Output
 
-Write the design to `docs/decisions/YYYY-MM-DD-<slug>.md` in the main checkout (today's date; `<slug>` is a short kebab-case name you will reuse for the branch). `mkdir -p docs/decisions` first. Do **not** commit it: /loop:plan moves it into the build's worktree, where build commits it as the feature's decision record. Sections: Problem, Chosen approach, Cut and why, Open questions. Keep it under a page — it's a handoff artifact for the next session, not a spec ritual. For any question deferred rather than answered, open an issue:
+Write the design to `docs/decisions/YYYY-MM-DD-<slug>.md` in the main checkout (today's date; `<slug>` is a short kebab-case name you will reuse for the branch). `mkdir -p docs/decisions` first. Do **not** commit it: /loop:plan moves it into the build's worktree, where build commits it as the feature's decision record. Sections: Problem, Chosen approach, Cut and why, Open questions. Keep it under a page — it's a handoff artifact for the next session, not a spec ritual. For any question deferred rather than answered, open an issue (title in single quotes with no quote characters inside):
 ```bash
 gh issue create --title '[p3] <question, one line>' --body-file - <<'EOF'
 Deferred from design docs/decisions/<file>.

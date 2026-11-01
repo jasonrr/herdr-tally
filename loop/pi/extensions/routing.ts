@@ -29,7 +29,7 @@ export default function (pi: ExtensionAPI) {
     if (event.systemPrompt.includes(DEV_LOOP_BLOCK)) return;
     // Framework-free test marker: greppable on stderr in -p mode. Only there —
     // in the interactive TUI, stderr paints over the "Working" line every turn.
-    if (!ctx.hasUI) console.error("[tally-routing] dev-loop routing injected");
+    if (!ctx.hasUI) console.error("[loop-routing] dev-loop routing injected");
     return { systemPrompt: `${event.systemPrompt}\n\n${DEV_LOOP_BLOCK}` };
   });
 }

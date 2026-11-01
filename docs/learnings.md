@@ -76,7 +76,9 @@
 - A cleanup gate written as "command output is empty" passes when the command errors (missing remote branch prints only to stderr) → gates must also require exit 0.
 - Reviewer reports read from a herdr pane (`pane read --source recent`) lose their top half when long → ask reviewers to write the report to a file in the checkout as well.
 
-## split-loop (PR #pending, 2026-11-01)
+## split-loop (PR #32, 2026-11-01)
 
 - Config-file fallback written as "try each name, skip on read error" (TS, Rust) vs "first file that exists wins" (bash `[ -f ]`) → the readers disagree on an unreadable or directory-shaped new file; when a plan says "mirror the hook", spell out the shadowing rule, not just the names.
 - A plan whose verify grep bans a string (`PR #pending`) while its replacement text tells the agent "never write `PR #pending`" → the task cannot pass as written; check every verify grep against the plan's own quoted replacement text.
+- Moving every component out of a plugin (skills, hooks) leaves an installed-but-empty plugin whose README line still promises what it used to ship → when a split empties a plugin, decide its fate in the design (keep as placeholder, or remove) instead of rewording docs at review.
+- A move-in written as `[ -f design ] && mv design` exits 1 when there is no design, next to a "stop if the move fails" rule → use `[ ! -f x ] || mv x` for optional steps in any sequence an agent checks exit codes on.

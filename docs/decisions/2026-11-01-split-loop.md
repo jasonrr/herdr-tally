@@ -48,3 +48,15 @@ C. Keep tally in-flight — does not meet the goal.
 ## Open questions → todos
 - Does `gh pr edit --body` race with GitHub's own checkbox toggles if the human ticks one? (Build is the only writer by contract; verify once live.)
 - Plan is written on main before any branch exists: confirm `git worktree add` + copy two untracked files is clean in both herdr (`herdr worktree create`) and desktop paths.
+
+## Deviations
+
+- T1 2223ecf — release.sh comment reworded to cover all three plugin.json files.
+- T2 86d9f5e — none. Parked: hook vs pi/TUI disagree when `.claude/dev-loop.md` is unreadable, a directory, or non-UTF-8 (tally todo t_dmk1lmeegu345).
+- T3 2d0e369, 674f822 — setup's rename offer uses `git mv` when the file is tracked and adds the new name to the ignore file when the old one was ignored (a plain `mv` left the config un-ignored).
+- T4 4e488a3, 00df1d9 — plan file written under `$ROOT`, not cwd; stop if the plan move fails; the inline path reads the real branch after `EnterWorktree`; dispatch-log paths prefixed with `$ROOT`.
+- T5 c2b7c40, 1d90461 — "never write PR #pending" reworded (the plan's own verify grep banned the literal); push is unconditional `git push -u origin HEAD` (a literal `<type>/<slug>` refspec fails after `EnterWorktree`, and a resumed session skipped the push).
+- T6 5ca7750, e083f27 — quoted `<<'EOF'` heredocs and quote-free titles for every gh body/title in review-branch, build, debug; review's Deviations bullets use build's shape.
+- T7 27b01c6, 17dec57 — `devloop_status` doc comment moved onto its function (it was fused onto `report_lock_pill`'s doc).
+- T8 fedfddd — CLAUDE.md line placed at the end of the "Herdr desktop app" section; no separate per-task reviewer for this docs-only diff (covered by the branch review).
+- Review fixes (this commit): review-branch inlines the config-seed one-liner instead of pointing at `skills/build/SKILL.md`; brainstorm and review-branch issue titles/heredocs quoted; optional design move written as `[ ! -f x ] || mv x` so a missing design no longer exits 1; setup uses `git rev-parse --git-path info/exclude` (works in linked worktrees); pi log tag `[loop-routing]`; README and marketplace say the root `tally` plugin now ships nothing (fate left to the human — tally todo t_dmk1yrk3pu00s).

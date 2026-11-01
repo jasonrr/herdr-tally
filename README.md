@@ -172,7 +172,7 @@ are present. Prefer the exact command the installer printed over these fallbacks
 
 ```bash
 claude plugin marketplace add jasonrr/herdr-tally   # or the local repo path
-claude plugin install tally@tally   # the store: MCP server + TUI
+claude plugin install tally@tally   # ships nothing now that the loop moved out; update it once to drop the old skills
 claude plugin install loop@tally    # the dev loop
 ```
 

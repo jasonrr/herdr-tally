@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "tally",
-      "description": "Project-scoped todos, scratchpads & plans for you and your agents.",
+      "description": "Placeholder since the dev loop moved to loop — the store itself installs as a herdr plugin. Update it once to drop the old skills and hook.",
       "source": "./",
       "category": "productivity"
     },
