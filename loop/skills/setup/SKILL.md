@@ -1,31 +1,25 @@
 ---
 name: setup
-description: One-time, consent-gated setup of the tally dev loop for this repo — asks before enabling session routing, proposes repo-specific reviewer lenses, then writes .claude/tally-dev-loop.md. Use when the user asks to set up, enable, or configure the dev loop, or when another tally skill suggested it.
+description: One-time, consent-gated setup of the dev loop for this repo — asks before enabling session routing, proposes repo-specific reviewer lenses, then writes .claude/dev-loop.md. Use when the user asks to set up, enable, or configure the dev loop, or when another loop skill suggested it.
 ---
 
 # Setup
 
-You are configuring, never assuming. This skill writes exactly one file — `.claude/tally-dev-loop.md` at the repo root — and only after the user approves its exact content. Never touch `.claude/settings.json`, global config, or anything else. Ask every question of the user (use AskUserQuestion when available).
+You are configuring, never assuming. This skill writes exactly one file — `.claude/dev-loop.md` at the repo root — and only after the user approves its exact content. Never touch `.claude/settings.json`, global config, or anything else. Ask every question of the user (use AskUserQuestion when available).
 
 ## 1. Current state
 
-If `.claude/tally-dev-loop.md` already exists, show it and ask what to change — routing on/off, builder model, lens edits — then apply just that and stop. A file written before the `builder-model` key existed simply lacks it; offer to add it. The full flow below is for first-time setup.
+If `.claude/tally-dev-loop.md` exists and `.claude/dev-loop.md` does not, offer to `mv` it to the new name (the loop reads both; the new name is just clearer) and then continue with the existing-file flow. If `.claude/dev-loop.md` already exists, show it and ask what to change — routing on/off, builder model, lens edits — then apply just that and stop. A file written before the `builder-model` key existed simply lacks it; offer to add it. The full flow below is for first-time setup.
+
+## 1b. GitHub — required
+
+The loop keeps its state in git and GitHub: designs and plans are committed files, the build's ledger is a draft PR, follow-ups are issues. Run `gh auth status` and `git remote get-url origin`; if either fails or the remote is not GitHub, stop and tell the user the loop needs a GitHub remote and a logged-in `gh`.
 
 ## 2. Routing — ask first
 
-Show the user this exact rule — the block the hook injects (kept in sync with `hooks/session-start.sh` by hand):
+Show the user the exact block the hook injects: read `hooks/routing.md` in this plugin — `../../hooks/routing.md` relative to the directory this SKILL.md is in — and print it verbatim. It is the single copy; the hook and the pi extension both read that file.
 
-    <dev-loop>
-    This project uses the tally dev loop. Standing routing — the human should never have to ask:
-    - Feature or non-trivial change requested → run /loop:brainstorm before writing any code.
-    - Bug, failing test, or unexpected behavior → run /loop:debug before proposing any fix.
-    - Approved design (tally scratchpad tagged design) or any multi-step implementation → run /loop:plan before building.
-    - A plan doc with plan:<slug> todos exists → execute it with /loop:build.
-    - Branch complete, or a merge/PR is requested → run /loop:review-branch first.
-    Trivial one-file changes and pure questions are exempt. When this rule triggers a skill, say so in one line.
-    </dev-loop>
-
-And the mechanism in one sentence: the tally plugin's SessionStart hook emits this into every session in this repo, only while this file says `routing: on`; deleting the file or setting `routing: off` disarms it. Then ask: enable routing? Decline → the file gets `routing: off`; they can still want lenses.
+And the mechanism in one sentence: the loop plugin's SessionStart hook emits this into every session in this repo, only while this file says `routing: on`; deleting the file or setting `routing: off` disarms it. Then ask: enable routing? Decline → the file gets `routing: off`; they can still want lenses.
 
 ## 3. Builder model — set the default
 
@@ -49,7 +43,7 @@ Read the repo before proposing: CLAUDE.md (especially invariants / gotchas / "do
 
 ## 5. Write and recap
 
-Show the complete file content, get one final yes, then write `.claude/tally-dev-loop.md`:
+Show the complete file content, get one final yes, then write `.claude/dev-loop.md`:
 
     # dev loop
     routing: on
@@ -60,9 +54,9 @@ Show the complete file content, get one final yes, then write `.claude/tally-dev
     - invariants: ...
     - simplicity: ...
 
-Recap in three lines: what was written and where; that `rm .claude/tally-dev-loop.md` (or `routing: off`) undoes everything; that the tally TUI footer now reflects this state.
+Recap in two lines: what was written and where; that `rm .claude/dev-loop.md` (or `routing: off`) undoes everything.
 
 Then ask (use AskUserQuestion when available) whether to gitignore or commit the file:
 
-- **Gitignore (default)** — add `.claude/tally-dev-loop.md` to `.gitignore`. The loop stays personal to this checkout. This is the safe default because committing it means every teammate who *also* has the tally plugin gets the `<dev-loop>` block injected into their sessions on clone — arming routing for them without their own consent, which is exactly what the rest of this setup is careful to ask about first. (For a purely local ignore that doesn't touch a shared `.gitignore`, use `.git/info/exclude` instead.)
-- **Commit** — the whole team shares one loop. Choose this only when everyone works in this repo with the tally plugin and wants the same routing + lenses. Teammates without the plugin just see inert markdown.
+- **Gitignore (default)** — add `.claude/dev-loop.md` to `.gitignore`. The loop stays personal to this checkout. This is the safe default because committing it means every teammate who *also* has the loop plugin gets the `<dev-loop>` block injected into their sessions on clone — arming routing for them without their own consent, which is exactly what the rest of this setup is careful to ask about first. (For a purely local ignore that doesn't touch a shared `.gitignore`, use `.git/info/exclude` instead.)
+- **Commit** — the whole team shares one loop. Choose this only when everyone works in this repo with the loop plugin and wants the same routing + lenses. Teammates without the plugin just see inert markdown.

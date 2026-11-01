@@ -1,6 +1,6 @@
 ---
 name: brainstorm
-description: Use before building any feature or non-trivial change — explores the problem, cuts scope, and lands an approved design in a tally scratchpad before any code is written. Triggers on "let's brainstorm", "help me think through", or ambiguous feature requests.
+description: Use before building any feature or non-trivial change — explores the problem, cuts scope, and lands an approved design in docs/decisions/ before any code is written. Triggers on "let's brainstorm", "help me think through", or ambiguous feature requests.
 ---
 
 # Brainstorm
@@ -17,6 +17,11 @@ Goal: an approved design the size of the problem. No code, scaffolding, or file 
 
 ## Output
 
-Write the design to a tally scratchpad tagged `design`: problem, chosen approach, what was cut and why, open questions. Keep it under a page — it's a handoff artifact for the next session, not a spec ritual. File a tally todo for any question deferred rather than answered.
+Write the design to `docs/decisions/YYYY-MM-DD-<slug>.md` in the main checkout (today's date; `<slug>` is a short kebab-case name you will reuse for the branch). `mkdir -p docs/decisions` first. Do **not** commit it: /loop:plan moves it into the build's worktree, where build commits it as the feature's decision record. Sections: Problem, Chosen approach, Cut and why, Open questions. Keep it under a page — it's a handoff artifact for the next session, not a spec ritual. For any question deferred rather than answered, open an issue:
+```bash
+gh issue create --title '[p3] <question, one line>' --body-file - <<'EOF'
+Deferred from design docs/decisions/<file>.
+EOF
+```
 
-Design approval comes from the user, not from you. Once approved, offer /loop:plan. If `.claude/tally-dev-loop.md` doesn't exist in this repo, also offer /loop:setup once — one line, not a pitch.
+Design approval comes from the user, not from you. Once approved, offer /loop:plan. If neither `.claude/dev-loop.md` nor `.claude/tally-dev-loop.md` exists in this repo, also offer /loop:setup once — one line, not a pitch.
