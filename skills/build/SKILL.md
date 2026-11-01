@@ -47,7 +47,7 @@ If your brief came from the Herdr desktop app (it names an hc terminal such as `
 
     hc send <dispatcher-terminal> "<slug>: <done|blocked|failed> — PR #<n> <url> | suite <N> OK | parked: <ids or none> | needs human: <one line or none>"
 
-If it exits non-zero, run `hc wait <dispatcher-terminal>` and send again; repeat up to 3 times.
+If it exits non-zero, run `hc wait <dispatcher-terminal> --timeout 100` and send again; repeat up to 3 times, then tell the human the report could not be delivered.
 
 Send it once, last, after the PR and review-branch — **once total**, not once per skill: if
 /tally:review-branch already sent a `blocked` report when it stopped at its gate, that was the

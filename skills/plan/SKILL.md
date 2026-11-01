@@ -72,7 +72,7 @@ child may also use its native SendMessage, but the brief names `agent prompt`.
     Report back when you finish, on every exit path — done, blocked awaiting the operator,
     stopped by a stop condition, or abandoned. Your last action is:
     hc send <dispatcher-terminal> "<slug>: <done|blocked|failed> — PR #<n> <url> | suite <N> OK | parked: <ids or none> | needs human: <one line or none>"
-    If hc send exits non-zero (the dispatcher is busy at a dialog), run `hc wait <dispatcher-terminal>` and send again; repeat up to 3 times.
+    If hc send exits non-zero (the dispatcher is busy at a dialog), run `hc wait <dispatcher-terminal> --timeout 100` and send again; repeat up to 3 times, then tell the human the report could not be delivered.
 
 Same rules: pushed once, last; you never `hc wait` on the child or `hc read` its screen.
 
