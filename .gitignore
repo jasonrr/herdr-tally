@@ -10,3 +10,8 @@
 .DS_Store
 
 node_modules/
+
+# Dev-loop scratch: desktop-app dispatch checkouts, agent brief files
+.claude/worktrees/
+.tally-brief.md
+.review-*.md
