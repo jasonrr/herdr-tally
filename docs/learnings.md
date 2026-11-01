@@ -71,3 +71,7 @@
 - A verify line `git diff | grep '^-[^-]'` to count removed lines skips any removed markdown bullet (`- **…` shows as `-- `) → the plan's "= 1" check printed 0 on a correct diff. Count with `grep '^-' | grep -vc '^---'`.
 - `hc wait` defaults to a 180 s check-in but the Bash tool kills calls at 120 s by default → every `hc wait` in a skill needs `--timeout 100` (or less).
 - `hc send` from a child into a busy agent terminal pastes a new user prompt there → don't use it as a "done" ping for reviewers the controller already `hc wait --children all`s on. `hc` terminal names are global across live terminals → prefix them with the caller's `$HC_TERMINAL_ID` and a round number.
+- `hc kill` leaves the terminal listed as `finished` and its name taken → re-running a reviewer under the same name fails with `name_taken`. Always `hc kill <t>` then `hc rm <t>`.
+- `hc send` exit codes: 3 = no such terminal, 11 = target has finished → retry loops must stop on those, not spend their retries.
+- A cleanup gate written as "command output is empty" passes when the command errors (missing remote branch prints only to stderr) → gates must also require exit 0.
+- Reviewer reports read from a herdr pane (`pane read --source recent`) lose their top half when long → ask reviewers to write the report to a file in the checkout as well.

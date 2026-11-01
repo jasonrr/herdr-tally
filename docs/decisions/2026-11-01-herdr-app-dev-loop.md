@@ -36,3 +36,12 @@ Worktree path for new app: same place herdr used, or `.claude/worktrees/<slug>` 
 
 ## Future: dev-loop may split from tally (human, 2026-11-01)
 Human is considering moving dev-loop out of tally, with ephemeral tracking by default and gh objects (issues for todos) where state must persist. Effect on this design: none to the approach. One rule for the build: keep the herdr/hc steps free of tally references. The brief carries "the plan id", not "the tally scratchpad id" wording baked into the mux steps. Then the multiplexer layer moves over unchanged and only the storage layer gets rewritten.
+
+## Deviations
+
+- Plan dispatch bullet: states step-back inline (the plan text said both "skip the next bullet" and "as in the next bullet"); `git worktree add --no-track`; app cleanup recomputes `ROOT`, says it replaces the herdr commands, and names the clean/unpushed check. Task-1 review. d22199a
+- `hc send` retry: `hc wait <dispatcher> --timeout 100`, up to 3 times, then tell the human — same wording in plan and build (Bash tool default timeout is 120 s; hc wait default 180 s). 8757e53
+- Reviewers in the desktop app no longer `hc send` a "done" ping (it pastes a stray prompt into the busy controller; `hc wait --children all` already covers it); names are `rv-<you>-r<round>-<n>` (names are global across live terminals); `--` before the claude argv; bounded wait. Task-3 review. 8757e53
+- Task 4 smoke and doc inserts run by the controller directly (verbatim plan text plus a live test; no implementer or reviewer). 56cb0df
+- Branch review fixes: retry stops on `hc send` exit 3/11; unpushed-commits gate requires exit 0; `branch -d` refusal → leave it, never `-D`; reviewer rerun and cleanup do `hc kill` + `hc rm`; exact END OF REVIEW match trims indent/bullets; wait loop asks the human after 6 timeouts; `.gitignore` covers `.claude/worktrees/`, `.tally-brief.md`, `.review-*.md`. f4e9c5d
+- Parked: `hc send` retry may not actually wait when the dispatcher is blocked (PLAUSIBLE p2, todo t_dmk00vsxoeogd).
