@@ -1,0 +1,2 @@
+scripts:
+  setup: ./dev_scripts/setup-worktree.sh
