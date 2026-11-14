@@ -15,3 +15,7 @@ node_modules/
 .claude/worktrees/
 .tally-brief.md
 .review-*.md
+
+# worktree bootstrap
+.worktree-bootstrapped
+.worktree-bootstrap.log
